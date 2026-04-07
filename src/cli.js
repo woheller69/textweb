@@ -216,7 +216,7 @@ async function interactive(url, options) {
     rl.prompt();
 
     rl.on('line', async (input) => {
-      const parts = input.trim().split(/\\s+/);
+      const parts = input.trim().split(/\s+/);
       const command = parts[0].toLowerCase();
       
       try {
