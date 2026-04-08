@@ -18,28 +18,39 @@ Instead of taking expensive screenshots and piping them through vision models, T
 ## Quick Start
 
 ```bash
-npm install -g textweb
 npx playwright install chromium
+git clone https://github.com/woheller69/textweb.git
+cd textweb/src
+
+node cli.js --interactive https://github.com
+
+#Or global installation
+cd textweb
+npm install -g .
+
 ```
 
 ```bash
 # Render any page
+node cli.js https://news.ycombinator.com
+
+#Or with global installation
 textweb https://news.ycombinator.com
 
 # Explicitly request grid mode (same as default)
-textweb --output grid https://news.ycombinator.com
+node cli.js --output grid https://news.ycombinator.com
 
 # Semantic JSON output for agent workflows
-textweb --output semantic https://example.com
+node cli.js --output semantic https://example.com
 
 # Hybrid output (grid + semantic metadata)
-textweb --output hybrid https://example.com
+node cli.js --output hybrid https://example.com
 
 # Interactive mode
-textweb --interactive https://github.com
+node cli.js--interactive https://github.com
 
 # Legacy JSON output (backward compatible)
-textweb --json https://example.com
+node cli.js --json https://example.com
 ```
 
 ## Example Output
@@ -66,15 +77,19 @@ TextWeb works with any AI agent framework. Pick your integration:
 The fastest way to add web browsing to any MCP-compatible client.
 
 ```bash
-# Install globally
-npm install -g cheerio
-npm install -g textweb
+# Install
+npx playwright install chromium
+git clone https://github.com/woheller69/textweb.git
+cd textweb/mcp
+npm install cheerio  #must be installed in textweb/mcp directory!
 
-# Or run directly
-npx textweb-mcp
+#To run in stdio mode
+node mcp/index.js
+textweb-mcp
 
 #To run in streamable http mode
 node mcp/index.js --host=.... --port=...
+textweb-mcp --host= --port=...
 ```
 
 **Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
