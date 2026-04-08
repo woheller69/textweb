@@ -14,7 +14,7 @@ class TextWebServer {
     this.options = {
       cols: options.cols || 100,
       // rows is deprecated — height is dynamic
-      timeout: options.timeout || 30000,
+      timeout: options.timeout || 10000,
       appRuntimeDir: options.appRuntimeDir || path.join(process.cwd(), 'canvas', 'app-runtime'),
       ...options
     };

@@ -19,7 +19,7 @@ class AgentBrowser {
     this.lastResult = null;
     this.headless = options.headless !== false;
     this.charH = 16; // default, updated after first render
-    this.defaultTimeout = options.timeout || 30000;
+    this.defaultTimeout = options.timeout || 10000;
     this.defaultRetries = options.retries ?? 2;
     this.defaultRetryDelayMs = options.retryDelayMs ?? 250;
   }

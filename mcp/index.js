@@ -186,7 +186,7 @@ const TOOLS = [
         text: { type: 'string', description: 'Text that must appear in page body' },
         url_includes: { type: 'string', description: 'Substring that must appear in current URL' },
         state: { type: 'string', enum: ['attached', 'detached', 'visible', 'hidden'], description: 'Selector wait state (default: visible)' },
-        timeout_ms: { type: 'number', description: 'Timeout in milliseconds (default: 30000)' },
+        timeout_ms: { type: 'number', description: 'Timeout in milliseconds (default: 10000)' },
         poll_ms: { type: 'number', description: 'Polling interval for text/url waits (default: 100)' },
         retries: { type: 'number', description: 'Retry attempts for flaky transitions' },
         retry_delay_ms: { type: 'number', description: 'Delay between retries in ms' },
@@ -414,18 +414,46 @@ async function handleMessage(msg) {
   }
 }
 
-// ─── stdio Transport ─────────────────────────────────────────────────────────
+// ─── CLI & Transport Setup ───────────────────────────────────────────────────
+const http = require('http');
+
+// Parse CLI args robustly
+const args = process.argv.slice(2);
+const options = {};
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
+  if (arg.startsWith('--host')) {
+    const [, val] = arg.split('=');
+    options.host = val ?? args[++i];
+  } else if (arg.startsWith('--port')) {
+    const [, val] = arg.split('=');
+    options.port = val ? Number(val) : Number(args[++i]);
+  }
+}
+if (options.host && options.port == null) options.port = 3000;
+
+console.error('✅ CLI options:', options);
 
 function main() {
+  if (options.host) {
+    console.error(`🚀 Starting HTTP server on ${options.host}:${options.port}`);
+    startHttpServer(options.host, Number(options.port));
+  } else {
+    console.error('✅ Running in stdio mode (no --host)');
+    startStdioTransport();
+  }
+}
+
+// ─── stdio Transport (original logic) ────────────────────────────────────────
+function startStdioTransport() {
   let buffer = '';
 
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', async (chunk) => {
     buffer += chunk;
 
-    // Process complete lines (newline-delimited JSON)
     const lines = buffer.split('\n');
-    buffer = lines.pop(); // Keep incomplete line in buffer
+    buffer = lines.pop();
 
     for (const line of lines) {
       const trimmed = line.trim();
@@ -438,7 +466,6 @@ function main() {
           process.stdout.write(response + '\n');
         }
       } catch (err) {
-        // Parse error
         process.stdout.write(
           jsonrpcError(null, -32700, `Parse error: ${err.message}`) + '\n'
         );
@@ -447,22 +474,88 @@ function main() {
   });
 
   process.stdin.on('end', async () => {
-    for (const [, browser] of sessions) {
-      await browser.close();
-    }
+    for (const [, browser] of sessions) await browser.close();
     sessions.clear();
     process.exit(0);
   });
 
   process.on('SIGINT', async () => {
-    for (const [, browser] of sessions) {
-      await browser.close();
-    }
+    for (const [, browser] of sessions) await browser.close();
     sessions.clear();
     process.exit(0);
   });
 }
 
+// ─── HTTP Transport (fully async-safe) ─────────────────────────────────────
+function startHttpServer(host, port) {
+  const server = http.createServer(async (req, res) => {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      return res.end('Use POST with JSON-RPC messages');
+    }
+
+    // ✅ MCP spec: Content-Type must be application/json (not x-ndjson)
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Transfer-Encoding': 'chunked',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*', // ✅ For dev/testing
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    });
+
+    let buffer = '';
+    req.on('data', async (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete line
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        try {
+          const msg = JSON.parse(trimmed);
+          const response = await handleMessage(msg);
+          if (response) res.write(response + '\n');
+        } catch (e) {
+          res.write(jsonrpcError(null, -32700, e.message) + '\n');
+        }
+      }
+    });
+
+    req.on('end', async () => {
+      if (buffer.trim()) {
+        try {
+          const msg = JSON.parse(buffer.trim());
+          const response = await handleMessage(msg);
+          if (response) res.write(response + '\n');
+        } catch (e) {
+          res.write(jsonrpcError(null, -32700, e.message) + '\n');
+        }
+      }
+      res.end();
+    });
+  });
+
+  server.on('error', (err) => {
+    console.error(`HTTP server error: ${err.message}`);
+  });
+
+  server.listen(port, host, () => {
+    console.error(`✅ MCP Streamable HTTP server listening on http://${host}:${port}`);
+  });
+
+  process.on('SIGINT', () => {
+    server.close(() => {
+      console.error('HTTP server closed');
+      process.exit(0);
+    });
+  });
+}
+
+
+// ─── Launch ────────────────────────────────────────────────────────────────
 ensureBrowser().then(main).catch((err) => {
   process.stderr.write(`Fatal: ${err.message}\n`);
   process.exit(1);
