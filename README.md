@@ -18,6 +18,7 @@ Instead of taking expensive screenshots and piping them through vision models, T
 ## Quick Start
 
 ```bash
+npm install playwright-extra puppeteer-extra-plugin-stealth
 npx playwright install chromium
 git clone https://github.com/woheller69/textweb.git
 cd textweb/src
@@ -78,6 +79,7 @@ The fastest way to add web browsing to any MCP-compatible client.
 
 ```bash
 # Install
+npm install playwright-extra puppeteer-extra-plugin-stealth
 npx playwright install chromium
 git clone https://github.com/woheller69/textweb.git
 cd textweb/mcp

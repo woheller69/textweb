@@ -2,7 +2,11 @@
  * AgentBrowser — the main interface for AI agents to browse the web
  */
 
-const { chromium } = require('playwright');
+const { chromium } = require('playwright-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+
+// Register the stealth plugin globally
+chromium.use(StealthPlugin());
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';

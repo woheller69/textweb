@@ -266,7 +266,7 @@ async function ddgSearch(query, maxResults = 10) {
         path: '/lite/',
         method: 'POST',
         headers: headers,
-        timeout: 15000,
+        timeout: 10000,
         minVersion: 'TLSv1.2',
       },
       (res) => {
