@@ -20,9 +20,6 @@ Instead of taking expensive screenshots and piping them through vision models, T
 ```bash
 npm install -g textweb
 npx playwright install chromium
-
-To run MCP server in streaming mode:
-node mcp/index.js --host=.... --port=...
 ```
 
 ```bash
@@ -74,6 +71,9 @@ npm install -g textweb
 
 # Or run directly
 npx textweb-mcp
+
+#To run in streamable http mode
+node mcp/index.js --host=.... --port=...
 ```
 
 **Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
