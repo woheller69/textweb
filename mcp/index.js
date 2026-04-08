@@ -12,6 +12,7 @@
 
 const { AgentBrowser } = require('../src/browser');
 const { ensureBrowser } = require('../src/ensure-browser');
+const http = require('http');  // ← required for HTTP server
 
 const SERVER_INFO = {
   name: 'textweb',
@@ -415,14 +416,17 @@ async function handleMessage(msg) {
 }
 
 // ─── CLI & Transport Setup ───────────────────────────────────────────────────
-const http = require('http');
-
-// Parse CLI args robustly
+// Declare CLI args and options (needed since they were missing)
 const args = process.argv.slice(2);
 const options = {};
+options.verbose = false; // default
+
+// Extend existing CLI parsing — keep existing logic, just add verbose
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
-  if (arg.startsWith('--host')) {
+  if (arg === '--verbose' || arg === '-v') {
+    options.verbose = true;
+  } else if (arg.startsWith('--host')) {
     const [, val] = arg.split('=');
     options.host = val ?? args[++i];
   } else if (arg.startsWith('--port')) {
@@ -432,7 +436,21 @@ for (let i = 0; i < args.length; i++) {
 }
 if (options.host && options.port == null) options.port = 3000;
 
+// Add helper for safe logging (truncates long strings)
+function truncate(str, maxLen = 500) {
+  if (!str) return '';
+  if (str.length <= maxLen) return str;
+  return str.slice(0, maxLen) + `... (${str.length - maxLen} chars truncated)`;
+}
+
+function log(msg, ...args) {
+  if (!options.verbose) return;
+  const prefix = `[${new Date().toISOString()}] VERBOSE: `;
+  console.error(`${prefix}${msg.replace(/%s/g, args[0])}`);
+}
+
 console.error('✅ CLI options:', options);
+
 
 function main() {
   if (options.host) {
@@ -486,29 +504,54 @@ function startStdioTransport() {
   });
 }
 
-// ─── HTTP Transport (fully async-safe) ─────────────────────────────────────
+// ─── HTTP Transport (fully async-safe + verbose) ─────────────────────────────
 function startHttpServer(host, port) {
   const server = http.createServer(async (req, res) => {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      return res.end('Use POST with JSON-RPC messages');
+    // ─── Full HTTP request logging (when verbose) ───────────────────────────
+    if (options.verbose) {
+      const reqInfo = `${req.method} ${req.url} HTTP/${req.httpVersion}`;
+      const headersStr = JSON.stringify(req.headers);
+      log('Incoming request: %s\nHeaders: %s', truncate(reqInfo + '\n' + headersStr, 800));
     }
 
-    // ✅ MCP spec: Content-Type must be application/json (not x-ndjson)
+    // Handle CORS preflight
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      });
+      if (options.verbose) log('Sent 204 for OPTIONS preflight');
+      return res.end();
+    }
+
+    if (req.method !== 'POST') {
+      res.writeHead(405, { 'Content-Type': 'text/plain' });
+      const body = 'Use POST with JSON-RPC messages';
+      res.end(body);
+      log('Rejected non-POST request: %s', body);
+      return;
+    }
+
+    // MCP-compliant response headers
     res.writeHead(200, {
       'Content-Type': 'application/json',
       'Transfer-Encoding': 'chunked',
       'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*', // ✅ For dev/testing
+      'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     });
 
     let buffer = '';
     req.on('data', async (chunk) => {
-      buffer += chunk.toString();
+      const chunkStr = chunk.toString();
+      if (options.verbose) log('HTTP body chunk (%d bytes)', chunkStr.length);
+
+      buffer += chunkStr;
       const lines = buffer.split('\n');
-      buffer = lines.pop(); // keep incomplete line
+      buffer = lines.pop();
 
       for (const line of lines) {
         const trimmed = line.trim();
@@ -516,10 +559,16 @@ function startHttpServer(host, port) {
 
         try {
           const msg = JSON.parse(trimmed);
+          if (options.verbose) log('Parsed JSON-RPC: id=%s, method=%s', msg.id, msg.method);
           const response = await handleMessage(msg);
-          if (response) res.write(response + '\n');
+          if (response) {
+            res.write(response + '\n');
+            if (options.verbose) log('Response sent: %s', truncate(response));
+          }
         } catch (e) {
-          res.write(jsonrpcError(null, -32700, e.message) + '\n');
+          const errResp = jsonrpcError(null, -32700, `Parse error: ${e.message}`);
+          res.write(errResp + '\n');
+          log('ERROR parsing HTTP line: %s | Line: %s', e.message, truncate(line));
         }
       }
     });
@@ -528,22 +577,28 @@ function startHttpServer(host, port) {
       if (buffer.trim()) {
         try {
           const msg = JSON.parse(buffer.trim());
+          if (options.verbose) log('Final parsed message after EOF: id=%s, method=%s', msg.id, msg.method);
           const response = await handleMessage(msg);
           if (response) res.write(response + '\n');
         } catch (e) {
-          res.write(jsonrpcError(null, -32700, e.message) + '\n');
+          const errResp = jsonrpcError(null, -32700, `Final buffer parse error: ${e.message}`);
+          res.write(errResp + '\n');
+          log('ERROR parsing final buffer: %s | Buffer: %s', e.message, truncate(buffer));
         }
       }
       res.end();
+      if (options.verbose) log('HTTP request complete (status=%d)', res.statusCode);
     });
   });
 
   server.on('error', (err) => {
-    console.error(`HTTP server error: ${err.message}`);
+    console.error(`[FATAL] HTTP server error: ${err.message}`);
+    process.exit(1);
   });
 
   server.listen(port, host, () => {
     console.error(`✅ MCP Streamable HTTP server listening on http://${host}:${port}`);
+    if (options.verbose) console.error('💡 Tip: Verbose logging enabled.');
   });
 
   process.on('SIGINT', () => {
@@ -553,6 +608,7 @@ function startHttpServer(host, port) {
     });
   });
 }
+
 
 
 // ─── Launch ────────────────────────────────────────────────────────────────
