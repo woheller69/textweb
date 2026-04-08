@@ -108,12 +108,50 @@ class AgentBrowser {
     return this.lastResult;
   }
 
+  _isNavigableUrl(href) {
+    if (!href || typeof href !== 'string') return false;
+    try {
+      const url = new URL(href);
+      return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }
+
   async click(ref, options = {}) {
-    const el = this._getElement(ref);
+    const el = this._getElement(ref); // Already validates existence
+
+    // 🎯 1. If it's a valid absolute URL, navigate directly (bypasses viewport issues)
+    if (this._isNavigableUrl(el.href)) {
+      console.debug(`🔗 Navigating for ref=${ref}: ${el.href}`);
+      return await this.navigate(el.href, options);
+    }
+
+    // 🖱️ 2. Fallback to click
+    console.debug(`🖱️ Clicking for ref=${ref} (selector: ${el.selector})`);
+
+    if (!el.selector) {
+      throw new Error(`Element ref=${ref} has no 'selector' property`);
+    }
+
     await this._withRetries(`click ref=${ref}`, async () => {
-      await this.page.click(el.selector);
+      // 🔒 Guarantee page exists before locator creation
+      if (!this.page) await this.launch();
+
+      const locator = this.page.locator(el.selector);
+
+      // ✅ Await each step separately. NO CHAINING.
+      await locator.scrollIntoViewIfNeeded({ timeout: 8000 });
+      await this.page.waitForTimeout(150); // Let layout/animations settle
+      await locator.click({
+        force: true,
+        position: { x: 10, y: 10 }, // Offset avoids sticky header/overlay blocks
+        timeout: 5000
+      });
+
       await this._settle();
     }, options);
+
     return await this.snapshot();
   }
 
