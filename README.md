@@ -20,6 +20,9 @@ Instead of taking expensive screenshots and piping them through vision models, T
 ```bash
 npm install -g textweb
 npx playwright install chromium
+
+To run MCP server in streaming mode:
+node mcp/index.js --host=.... --port=...
 ```
 
 ```bash
