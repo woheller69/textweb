@@ -13,6 +13,7 @@
 const { AgentBrowser } = require('../src/browser');
 const { ensureBrowser } = require('../src/ensure-browser');
 const http = require('http');  // ← required for HTTP server
+const cheerio = require('cheerio');
 
 const SERVER_INFO = {
   name: 'textweb',
@@ -22,6 +23,24 @@ const SERVER_INFO = {
 const SESSION_NOTE = 'Optional session_id to isolate state across flows. Defaults to "default".';
 
 const TOOLS = [
+  {
+    name: 'textweb_ddg_search',
+    description: 'Search DuckDuckGo via HTTP POST (no browser). Returns up to max_results structured results (title, link, snippet). Optimized for reliability — works where browser-based scraping fails (e.g., for obscure domains). Use this for factual searches. Not interactive (no clicking), but highly accurate.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The search query (e.g., "tc83.de")' },
+        max_results: {
+          type: 'number',
+          description: 'Maximum number of results to return (default: 10, max: 20)',
+          minimum: 1,
+          maximum: 20,
+          default: 10
+        },
+      },
+      required: ['query'],
+    },
+  },
   {
     name: 'textweb_navigate',
     description: 'Navigate to a URL and render the page as a structured text grid. Interactive elements are annotated with [ref] numbers for clicking/typing. Returns the text grid view, element map, and page metadata. Use this as your primary way to view web pages — no screenshots or vision model needed.',
@@ -212,6 +231,150 @@ const TOOLS = [
   },
 ];
 
+// ─── DuckDuckGo Search (HTTP POST, no browser) ─────────────────────────────
+const https = require('https');
+const zlib = require('zlib');
+
+async function ddgSearch(query, maxResults = 10) {
+  const queryEncoded = encodeURIComponent(query);
+
+  // Build exact POST body (like Python's data={"q": query, "b": "", "kl": ""})
+  const body = `q=${queryEncoded}&b=&kl=`;
+
+  const headers = {
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'Content-Length': Buffer.byteLength(body),
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0',
+    'Referer': 'https://duckduckgo.com/',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Accept-Encoding': 'gzip, deflate',
+    'DNT': '1',
+    'Sec-GPC': '1',
+    'Connection': 'keep-alive',
+  };
+
+  return new Promise((resolve, reject) => {
+    // ✅ ALL variables declared in outer scope
+    let chunks = [];
+    let responseText = '';
+    let decompressed = false;
+
+    const req = https.request(
+      {
+        hostname: 'lite.duckduckgo.com',
+        path: '/lite/',
+        method: 'POST',
+        headers: headers,
+        timeout: 15000,
+        minVersion: 'TLSv1.2',
+      },
+      (res) => {
+        res.on('data', (chunk) => {
+          chunks.push(chunk);
+        });
+
+        res.on('end', () => {
+          try {
+            // ✅ Properly reconstruct response
+            const buffer = Buffer.concat(chunks);
+            responseText = buffer.toString('utf8');
+
+            // Handle gzip (DDG Lite often compresses POST responses)
+            if (res.headers['content-encoding'] === 'gzip') {
+              try {
+                responseText = zlib.gunzipSync(buffer).toString('utf8');
+                decompressed = true;
+              } catch (gzipErr) {
+                console.error('⚠️ GZIP decompression failed, using raw:', gzipErr.message);
+              }
+            }
+
+            // Safety check
+            if (!responseText || responseText.length < 100) {
+              const msg = `DDG returned empty/tiny response (${responseText.length} chars). Response preview: ${responseText.substring(0, 200)}`;
+              console.error(msg);
+              return reject(new Error(msg));
+            }
+
+            // Load HTML with Cheerio
+            const $ = cheerio.load(responseText);
+            const results = [];
+
+            // Look for rows containing a link with class="result-link"
+            $('tr').each((i, row) => {
+              const $row = $(row);
+              const $link = $row.find('a.result-link').first();
+
+              if (!$link.length) return; // Not a result row
+
+              const href = $link.attr('href');
+              if (!href) return; // Skip empty hrefs
+
+              // Unwrap DDG redirect
+              let finalUrl = href;
+              if (href.includes('uddg=')) {
+                try {
+                  const match = href.match(/uddg=(.+?)(&|$)/);
+                  if (match && match[1]) {
+                    finalUrl = decodeURIComponent(match[1]);
+                  }
+                } catch (e) {
+                  return; // Skip broken redirects
+                }
+              }
+
+              // Skip tracking links
+              if (finalUrl.includes('y.js')) return;
+
+              const title = $link.text().trim();
+
+              // Get snippet from the *next* result-snippet row
+              const snippet = $row.nextAll('tr').has('td.result-snippet').first()
+                .find('td.result-snippet')
+                .text()
+                .trim();
+
+              results.push({
+                position: results.length + 1,
+                title,
+                link: finalUrl,
+                snippet
+              });
+
+              if (results.length >= maxResults) return false; // break
+            });
+
+
+
+            const text = results.length
+              ? `DuckDuckGo search for "${query}":\n\n` +
+                results.map(r => `[${r.position}] ${r.title}\n${r.link}\n${r.snippet}\n`).join('\n')
+              : `No results found for "${query}". Try rephrasing your query.`;
+
+            resolve(text);
+          } catch (err) {
+            // ✅ Safe: use responseText from outer scope (already defined)
+            const preview = responseText.substring(0, 500);
+            reject(new Error(`Failed to parse DDG results: ${err.message}\n\nRaw HTML preview:\n${preview}`));
+          }
+        });
+      }
+    );
+
+    req.on('error', (err) => reject(err));
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('DDG search timed out'));
+    });
+
+    // Send POST body
+    req.write(body);
+    req.end();
+  });
+}
+
+
 // ─── Browser Sessions ───────────────────────────────────────────────────────
 
 /** @type {Map<string, AgentBrowser>} */
@@ -300,6 +463,16 @@ async function executeTool(name, args = {}) {
   const { browser: b, sessionId } = await getBrowser(args);
 
   switch (name) {
+  case 'textweb_ddg_search': {
+    const query = (args.query || '').trim();
+    const maxResults = Math.min(Math.max(1, args.max_results || 10), 20);
+
+    if (!query) {
+      throw new Error("textweb_ddg_search requires a non-empty 'query'");
+    }
+
+    return await ddgSearch(query, maxResults);
+  }
     case 'textweb_navigate': {
       const result = await b.navigate(args.url, retryOptions(args));
       return formatResult(result);
@@ -608,8 +781,6 @@ function startHttpServer(host, port) {
     });
   });
 }
-
-
 
 // ─── Launch ────────────────────────────────────────────────────────────────
 ensureBrowser().then(main).catch((err) => {

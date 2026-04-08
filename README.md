@@ -67,6 +67,7 @@ The fastest way to add web browsing to any MCP-compatible client.
 
 ```bash
 # Install globally
+npm install -g cheerio
 npm install -g textweb
 
 # Or run directly
