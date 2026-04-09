@@ -195,7 +195,7 @@ async function extractElements(page) {
           const el = node;
           if (!isVisible(el)) return NodeFilter.FILTER_REJECT;
           // Accept specific non-text elements
-          if (el.matches('input, select, textarea, img, hr, br')) {
+          if (el.matches('input, select, textarea, button, img, hr, br')) {
             return NodeFilter.FILTER_ACCEPT;
           }
           return NodeFilter.FILTER_SKIP;
