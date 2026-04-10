@@ -8,7 +8,7 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 // Register the stealth plugin globally
 chromium.use(StealthPlugin());
 
-const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
+const DEFAULT_VIEWPORT = { width: 1200, height: 1800 };  //must be same as in Renderer
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 const { render } = require('./renderer');
@@ -21,7 +21,7 @@ class AgentBrowser {
     this.context = null;
     this.page = null;
     this.lastResult = null;
-    this.headless = options.headless !== false;
+    this.headless = false; //open browser window for debugging. Sometimes we need to accept cookies, etc
     this.charH = 16; // default, updated after first render
     this.defaultTimeout = options.timeout || 10000;
     this.defaultRetries = options.retries ?? 2;
@@ -97,6 +97,7 @@ class AgentBrowser {
 
   async snapshot() {
     if (!this.page) throw new Error('No page open. Call navigate() first.');
+    this.scrollY = await this.page.evaluate(() => window.scrollY);  //sync with browser window
     this.lastResult = await render(this.page, {
       cols: this.cols,
       scrollY: this.scrollY,
@@ -220,9 +221,9 @@ class AgentBrowser {
   }
 
   async scroll(direction = 'down', amount = 1) {
-    // Scroll by roughly one "page" worth of content
-    const pageH = 40 * this.charH; // ~40 lines of content
-    const delta = amount * pageH;
+    // Scroll by one "page" = viewport height
+
+    const delta = DEFAULT_VIEWPORT.height * amount;
     if (direction === 'down') {
       this.scrollY += delta;
     } else if (direction === 'up') {
@@ -431,7 +432,7 @@ class AgentBrowser {
   async screenshot(options = {}) {
     if (!this.page) throw new Error('No page open. Call navigate() first.');
     return await this.page.screenshot({
-      fullPage: true,
+      fullPage: false,
       type: 'png',
       ...options,
     });

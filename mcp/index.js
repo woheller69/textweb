@@ -43,7 +43,7 @@ const TOOLS = [
   },
   {
     name: 'textweb_navigate',
-    description: 'Navigate to a URL and render the page as a structured text grid. Interactive elements are annotated with [ref] numbers for clicking/typing. Returns the text grid view, element map, and page metadata. Use this as your primary way to view web pages — no screenshots or vision model needed.',
+    description: 'Navigate to a URL and render the page as a structured text grid. Interactive elements are annotated with [ref] numbers for clicking/typing. Returns the text grid view, element map, and page metadata. Use this as your primary way to view web pages — no screenshots or vision model needed. The view is may be capped. Scroll down if needed.',
     inputSchema: {
       type: 'object',
       properties: {

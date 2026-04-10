@@ -122,7 +122,7 @@ EXAMPLES:
 INTERACTIVE COMMANDS:
   click <ref>                        Click element by reference number
   type <ref> <text>                  Type text into input element
-  scroll <direction> [amount]        Scroll (up/down/left/right)
+  scroll <direction> [amount]        Scroll (up/down/top)
   select <ref> <value>               Select dropdown option
   snapshot                           Re-render current page
   query <selector>                   Find elements by CSS selector
@@ -226,7 +226,7 @@ async function interactive(url, options) {
 Interactive Commands:
   click <ref>                 Click element [ref]
   type <ref> <text>           Type text into element [ref]
-  scroll <dir> [amount]       Scroll direction (up/down/left/right)
+  scroll <dir> [amount]       Scroll direction (up/down/top)
   select <ref> <value>        Select option in dropdown [ref]
   snapshot                    Re-render current page
   query <selector>            Find elements by CSS selector
@@ -277,7 +277,7 @@ Interactive Commands:
               console.log('Usage: scroll <direction> [amount]');
             } else {
               const direction = parts[1];
-              const amount = parseInt(parts[2]) || 5;
+              const amount = parseInt(parts[2]) || 1;
               result = await browser.scroll(direction, amount);
               console.log(result.view);
             }

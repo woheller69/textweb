@@ -10,7 +10,7 @@
  * - Row-grouping layout (elements grouped by Y position)
  * - Dynamic height (grows to fit all content)
  */
-
+const DEFAULT_VIEWPORT = { width: 1200, height: 1800 }; //must be same as in Browser
 /**
  * Measure actual character dimensions from the page's fonts
  */
@@ -55,6 +55,8 @@ async function measureCharSize(page) {
  */
 async function extractElements(page) {
   return await page.evaluate(() => {
+    const pageScrollY = window.scrollY || document.documentElement.scrollTop;
+    const pageScrollX = window.scrollX || document.documentElement.scrollLeft;
     const results = [];
     const interactiveSelector = 'a[href], button, input, select, textarea, [onclick], [role="button"], [role="link"], [tabindex]:not([tabindex="-1"]), summary';
 
@@ -331,8 +333,8 @@ async function extractElements(page) {
         name: el.getAttribute('name') || '',
         alt: el.getAttribute('alt') || '',
         value,
-        x: rect.x,
-        y: rect.y,
+        x: rect.x + pageScrollX,
+        y: rect.y + pageScrollY,
         w: rect.width,
         h: rect.height,
         z: getZIndex(el),
@@ -527,11 +529,14 @@ function renderGrid(elements, cols, charW, charH, scrollY = 0, options = {}) {
   let refId = 0;
   const lines = []; // output lines as strings
   const layout = [];
-
+  const pageH = DEFAULT_VIEWPORT.height
+  console.log(`Renderer scrolly ${scrollY}`)
   // Filter to viewport (vertically — allow overflow below)
   const visible = elements.filter(el => {
     const adjY = el.y - scrollY;
-    return adjY + el.h >= 0; // don't filter bottom — allow overflow
+    //console.log(`Element ${el.y} scrollY ${scrollY} charH ${charH} pageH ${pageH}`);
+    return (adjY + el.h >= 0) && (adjY + el.h < pageH);
+    //return adjY + el.h >= 0; // don't filter bottom — allow overflow
   });
 
   // Group into visual rows
