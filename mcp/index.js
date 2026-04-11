@@ -43,7 +43,7 @@ const TOOLS = [
   },
   {
     name: 'textweb_navigate',
-    description: 'Navigate to a URL and render the page as a structured text grid. Interactive elements are annotated with [ref] numbers for clicking/typing. Returns the text grid view, element map, and page metadata. Use this as your primary way to view web pages — no screenshots or vision model needed. The view is may be capped. Scroll down if needed.',
+    description: 'Navigate to a URL and render the page as a structured text grid. Interactive elements are annotated with [ref] numbers for clicking/typing. Returns the text grid view, element map, and page metadata. Use this as your primary way to view web pages. IMPORTANT: The initial view is ~1800px visible. Use textweb_scroll tool to get more.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -402,7 +402,7 @@ function formatResult(result) {
     .map(([ref, el]) => `[${ref}] ${el.semantic}: ${el.text || '(no text)'}`)
     .join('\n');
 
-  return `URL: ${result.meta?.url || 'unknown'}\nTitle: ${result.meta?.title || 'unknown'}\nRefs: ${result.meta?.totalRefs || 0}\n\n${result.view}\n\nInteractive elements:\n${refs}`;
+  return `URL: ${result.meta?.url || 'unknown'}\nVisible range (px): ${result.meta?.scrollY ?? 'unknown'} to ${result.meta?.scrollY+result.meta?.viewport_height || 'unknown'} of ${result.meta?.full_height || 'unknown'}\nTitle: ${result.meta?.title || 'unknown'}\nRefs: ${result.meta?.totalRefs || 0}\n\n${result.view}\n\nInteractive elements:\n${refs}`;
 }
 
 function retryOptions(args = {}) {

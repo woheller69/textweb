@@ -5,12 +5,11 @@
  * interactive element references. No screenshots, no vision models.
  * 
  * Key design decisions:
- * - Overflow > truncation (never lose information)
  * - Measure actual font metrics from the page
  * - Row-grouping layout (elements grouped by Y position)
  * - Dynamic height (grows to fit all content)
  */
-const DEFAULT_VIEWPORT = { width: 1200, height: 1800 }; //must be same as in Browser
+
 /**
  * Measure actual character dimensions from the page's fonts
  */
@@ -521,22 +520,20 @@ function formatElement(el, ref, cols, startCol, charW) {
  * 1. Group elements into visual rows (same Y position ± threshold)
  * 2. Within each visual row, sort by X and lay out left-to-right with spacing
  * 3. Each visual row maps to one or more grid lines
- * 4. Grid grows as needed (overflow — never lose data)
  */
-function renderGrid(elements, cols, charW, charH, scrollY = 0, options = {}) {
+function renderGrid(elements, cols, charW, charH, scrollY = 0, viewport_height, options = {}) {
   const { includeLayout = false } = options;
   const elementMap = {};
   let refId = 0;
   const lines = []; // output lines as strings
   const layout = [];
-  const pageH = DEFAULT_VIEWPORT.height
-  console.log(`Renderer scrolly ${scrollY}`)
-  // Filter to viewport (vertically — allow overflow below)
+  const pageH = viewport_height;
+  //console.log(`Renderer scrolly ${scrollY}`)
+  // Filter to viewport
   const visible = elements.filter(el => {
     const adjY = el.y - scrollY;
     //console.log(`Element ${el.y} scrollY ${scrollY} charH ${charH} pageH ${pageH}`);
     return (adjY + el.h >= 0) && (adjY + el.h < pageH);
-    //return adjY + el.h >= 0; // don't filter bottom — allow overflow
   });
 
   // Group into visual rows
@@ -623,7 +620,7 @@ function renderGrid(elements, cols, charW, charH, scrollY = 0, options = {}) {
  * Main render function: page → text grid
  */
 async function render(page, options = {}) {
-  const { cols = 120, scrollY = 0 } = options;
+  const { cols = 120, scrollY = 0, viewport_height = 1800 } = options;
   const startMs = Date.now();
   
   // Measure actual font metrics from the page
@@ -632,7 +629,7 @@ async function render(page, options = {}) {
   const charH = metrics.charH;
   
   const elements = await extractElements(page);
-  const gridResult = renderGrid(elements, cols, charW, charH, scrollY, { includeLayout: true });
+  const gridResult = renderGrid(elements, cols, charW, charH, scrollY, viewport_height, { includeLayout: true });
   const result = {
     view: gridResult.view,
     elements: gridResult.elements,

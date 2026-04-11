@@ -8,7 +8,7 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 // Register the stealth plugin globally
 chromium.use(StealthPlugin());
 
-const DEFAULT_VIEWPORT = { width: 1200, height: 1800 };  //must be same as in Renderer
+const DEFAULT_VIEWPORT = { width: 1200, height: 1800 };
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 const { render } = require('./renderer');
@@ -101,9 +101,13 @@ class AgentBrowser {
     this.lastResult = await render(this.page, {
       cols: this.cols,
       scrollY: this.scrollY,
+      viewport_height: DEFAULT_VIEWPORT.height
     });
     this.lastResult.meta.url = this.page.url();
     this.lastResult.meta.title = await this.page.title();
+    this.lastResult.meta.full_height = await this.page.evaluate("document.documentElement.scrollHeight");
+    this.lastResult.meta.viewport_height = DEFAULT_VIEWPORT.height;
+
     // Cache measured charH for scrolling
     if (this.lastResult.meta.charH) this.charH = this.lastResult.meta.charH;
     return this.lastResult;
