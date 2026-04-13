@@ -1,8 +1,8 @@
 # TextWeb
 
-**A text-grid web renderer for AI agents — see the web without screenshots.**
+**A markdown web renderer for AI agents — see the web without screenshots.**
 
-Instead of taking expensive screenshots and piping them through vision models, TextWeb renders web pages as structured text grids that LLMs can reason about natively. Full JavaScript execution, spatial layout preserved, interactive elements annotated.
+Instead of taking expensive screenshots and piping them through vision models, TextWeb renders web pages as markdown that LLMs can reason about natively. Full JavaScript execution, spatial layout preserved, interactive elements annotated.
 
 📄 [Documentation](https://chrisrobison.github.io/textweb) · 📦 [npm](https://www.npmjs.com/package/textweb) · 🐙 [GitHub](https://github.com/chrisrobison/textweb)
 
@@ -120,7 +120,7 @@ textweb-mcp --host= --port=...
 
 **OpenClaw** — add to `openclaw.json` skills or MCP config.
 
-Then just ask: *"Go to hacker news and find posts about AI"* — the agent uses text grids instead of screenshots.
+Then just ask: *"Go to hacker news and find posts about AI"* — the agent uses markdown text instead of screenshots.
 
 **New (v0.2.1-style MCP capabilities):**
 - `session_id` on every tool call for isolated parallel workflows
@@ -208,7 +208,7 @@ const { AgentBrowser } = require('textweb');
 const browser = new AgentBrowser({ cols: 120 });
 const { view, elements, semantic, meta } = await browser.navigate('https://example.com');
 
-console.log(view);        // The text grid
+console.log(view);        // The markdown text
 console.log(elements);    // { 0: { selector, tag, text, href }, ... }
 console.log(semantic);    // { mode, url, title, elements: [...] }
 console.log(meta.stats);  // { totalElements, interactiveElements, renderMs }

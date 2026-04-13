@@ -43,12 +43,11 @@ const TOOLS = [
   },
   {
     name: 'textweb_navigate',
-    description: 'Navigate to a URL and render the page as a structured text grid. Interactive elements are annotated with [ref] numbers for clicking/typing. Returns the text grid view, element map, and page metadata. Use this as your primary way to view web pages. IMPORTANT: The initial view is ~1800px visible. Use textweb_scroll tool to get more.',
+    description: 'Navigate to a URL and render the page as a markdown text. Interactive elements are annotated with [ref] numbers for clicking/typing. Returns the text as markdown, element map, and page metadata. Use this as your primary way to view web pages. IMPORTANT: The initial view is ~1800px visible. Use textweb_scroll tool to get more.',
     inputSchema: {
       type: 'object',
       properties: {
         url: { type: 'string', description: 'The URL to navigate to' },
-        cols: { type: 'number', description: 'Grid width in characters (default: 120)' },
         session_id: { type: 'string', description: SESSION_NOTE },
         retries: { type: 'number', description: 'Retry attempts for flaky transitions' },
         retry_delay_ms: { type: 'number', description: 'Delay between retries in ms' },
@@ -58,11 +57,11 @@ const TOOLS = [
   },
   {
     name: 'textweb_click',
-    description: 'Click an interactive element by its reference number. Returns the updated text grid after the click (page may navigate or update).',
+    description: 'Click an interactive element by its reference number. Returns the updated markdown text after the click (page may navigate or update).',
     inputSchema: {
       type: 'object',
       properties: {
-        ref: { type: 'number', description: 'Element reference number from the text grid (e.g., 3 for [3])' },
+        ref: { type: 'number', description: 'Element reference number from the markdown text (e.g., 3 for [3])' },
         session_id: { type: 'string', description: SESSION_NOTE },
         retries: { type: 'number', description: 'Retry attempts for flaky transitions' },
         retry_delay_ms: { type: 'number', description: 'Delay between retries in ms' },
@@ -72,7 +71,7 @@ const TOOLS = [
   },
   {
     name: 'textweb_type',
-    description: 'Type text into an input field by its reference number. Clears existing content and types the new text. Returns the updated text grid.',
+    description: 'Type text into an input field by its reference number. Clears existing content and types the new text. Returns the updated markdown text.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -102,7 +101,7 @@ const TOOLS = [
   },
   {
     name: 'textweb_scroll',
-    description: 'Scroll the page up or down. Returns the updated text grid showing the new viewport position.',
+    description: 'Scroll the page up or down. Returns the updated markdown text showing the new viewport position.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -115,7 +114,7 @@ const TOOLS = [
   },
   {
     name: 'textweb_snapshot',
-    description: 'Re-render the current page as a text grid without navigating. Useful after waiting for dynamic content to load.',
+    description: 'Re-render the current page as a markdown text without navigating. Useful after waiting for dynamic content to load.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -125,7 +124,7 @@ const TOOLS = [
   },
   {
     name: 'textweb_press',
-    description: 'Press a keyboard key (e.g., Enter, Tab, Escape, ArrowDown). Returns the updated text grid.',
+    description: 'Press a keyboard key (e.g., Enter, Tab, Escape, ArrowDown). Returns the updated markdown text.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -190,7 +189,6 @@ const TOOLS = [
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Absolute path of previously saved storage state JSON' },
-        cols: { type: 'number', description: 'Grid width in characters (default: 120)' },
         session_id: { type: 'string', description: SESSION_NOTE },
       },
       required: ['path'],

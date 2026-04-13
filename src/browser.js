@@ -15,7 +15,6 @@ const { renderMarkdown} = require('./renderer');
 
 class AgentBrowser {
   constructor(options = {}) {
-    this.cols = options.cols || 120;
     this.scrollY = 0;
     this.browser = null;
     this.context = null;

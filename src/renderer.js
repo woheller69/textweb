@@ -684,7 +684,7 @@ async function renderMarkdown(page, options = {}) {
     view: markdown,
     elements: elementMap,
     meta: {
-      cols: 80, rows: markdown.split('\n').length, scrollY, viewportHeight: vpH,
+      rows: markdown.split('\n').length, scrollY, viewportHeight: vpH,
       totalRefs, charW: 1, charH: 1,
       totalElements: allElements.length, interactiveElements: totalRefs,
       url: pageMeta.url, title: pageMeta.title, renderMs: 0,
