@@ -272,6 +272,17 @@ function renderParagraphs(paragraphs, options = {}) {
   return { markdown: md.trim(), elementMap, totalRefs: refId - refStart };
 }
 
+function truncateText(text, maxLen = 80) {
+  if (!text) return text;
+
+  const newlineIndex = text.indexOf('\n');
+  const limit = (newlineIndex !== -1 && newlineIndex < maxLen) ? newlineIndex : maxLen;
+
+  if (text.length <= limit) return text;
+
+  return text.substring(0, limit).trim() + '…';
+}
+
 function buildElementMapEntry(item, ref) {
   return {
     selector: item.selector,
@@ -281,7 +292,7 @@ function buildElementMapEntry(item, ref) {
       item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.type :
       item.tag,
     href: item.href,
-    text: item.text,
+    text: truncateText(item.text),
     label: item.text,
     x: item.x, y: item.y, w: item.w, h: item.h,
     action: getAction(item.tag === 'a' ? 'link' : item.tag),

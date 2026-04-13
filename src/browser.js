@@ -141,7 +141,7 @@ class AgentBrowser {
     }
 
     // 🖱️ 2. Fallback to click
-    console.debug(`🖱️ Clicking for ref=${ref} (selector: ${el.selector})`);
+    console.debug(`🖱️ Clicking for ref=${ref} (selector: ${el.selector}) Name: ${el.name} Tag: ${el.tag} Semantic: ${el.semantic} Text: ${el.text}`);
 
     if (!el.selector) {
       throw new Error(`Element ref=${ref} has no 'selector' property`);
@@ -151,7 +151,7 @@ class AgentBrowser {
       // 🔒 Guarantee page exists before locator creation
       if (!this.page) await this.launch();
 
-      const locator = this.page.locator(el.selector);
+      const locator = this.page.getByRole(el.semantic, { name: el.text });
 
       // ✅ Await each step separately. NO CHAINING.
       await locator.scrollIntoViewIfNeeded({ timeout: 8000 });
