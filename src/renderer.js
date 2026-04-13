@@ -13,41 +13,6 @@
 /**
  * Measure actual character dimensions from the page's fonts
  */
-async function measureCharSize(page) {
-  return await page.evaluate(() => {
-    // Create a test element using the page's default font
-    const el = document.createElement('span');
-    const bodyStyle = getComputedStyle(document.body);
-    el.style.fontFamily = bodyStyle.fontFamily;
-    el.style.fontSize = bodyStyle.fontSize;
-    el.style.fontWeight = 'normal';
-    el.style.position = 'absolute';
-    el.style.visibility = 'hidden';
-    el.style.whiteSpace = 'nowrap';
-    
-    // Use a representative sample of characters for average width
-    // (proportional fonts vary per char — average is the best we can do)
-    el.textContent = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    document.body.appendChild(el);
-    const avgW = el.getBoundingClientRect().width / el.textContent.length;
-    const charH = el.getBoundingClientRect().height;
-    
-    // Also get line height (more accurate for vertical spacing)
-    el.textContent = 'X';
-    el.style.lineHeight = bodyStyle.lineHeight;
-    const lineH = el.getBoundingClientRect().height;
-    
-    document.body.removeChild(el);
-    
-    return {
-      charW: avgW,
-      charH: Math.max(charH, lineH),
-      lineH: lineH,
-      font: bodyStyle.fontFamily,
-      fontSize: bodyStyle.fontSize,
-    };
-  });
-}
 
 /**
  * Extract visible elements from a Playwright page with positions and metadata
@@ -84,15 +49,15 @@ async function extractElements(page) {
       // Build a robust CSS selector for clicking
       // Priority: id > data-testid > aria > role+name > name > positional
       if (el.id) return '#' + CSS.escape(el.id);
-      
+
       const tag = el.tagName.toLowerCase();
-      
+
       // Stable test attributes (used by many frameworks)
       for (const attr of ['data-testid', 'data-test', 'data-cy', 'data-test-id']) {
         const val = el.getAttribute(attr);
         if (val) return `[${attr}="${val}"]`;
       }
-      
+
       // Aria-label (very stable, set by developers intentionally)
       const ariaLabel = el.getAttribute('aria-label');
       if (ariaLabel) {
@@ -113,7 +78,7 @@ async function extractElements(page) {
 
       // Name attribute (forms)
       if (el.getAttribute('name')) return `${tag}[name="${el.getAttribute('name')}"]`;
-      
+
       // href for links (use partial match for stability)
       if (tag === 'a' && el.href) {
         const href = el.getAttribute('href');
@@ -158,7 +123,7 @@ async function extractElements(page) {
     document.querySelectorAll('table').forEach(table => {
       const rect = table.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
-      
+
       const rows = [];
       table.querySelectorAll('tr').forEach(tr => {
         const cells = [];
@@ -176,7 +141,7 @@ async function extractElements(page) {
         });
         if (cells.length > 0) rows.push(cells);
       });
-      
+
       tableData.set(table, {
         rect,
         rows,
@@ -351,7 +316,12 @@ async function extractElements(page) {
     return results;
   });
 }
+/**
+ * TextWeb Markdown Renderer (Robust + Forms Support)
+ * Captures flowing text AND standalone inputs/buttons/forms
+ */
 
+// ─── Helpers (unchanged from previous version) ───────────────────────────────
 function stableHash(input) {
   let hash = 5381;
   for (let i = 0; i < input.length; i++) {
@@ -361,13 +331,7 @@ function stableHash(input) {
   return (hash >>> 0).toString(36);
 }
 
-function buildSemanticModel(rawElements, layoutEntries, pageMeta) {
-  const layoutByDomPath = new Map();
-  for (const item of layoutEntries || []) {
-    const key = item.domPath || `${item.selector}|${item.x}|${item.y}`;
-    layoutByDomPath.set(key, item);
-  }
-
+function buildSemanticModel(rawElements, layoutEntries = [], pageMeta = {}) {
   const elements = [];
   const byPath = new Map();
   const rawByPath = new Map();
@@ -377,275 +341,407 @@ function buildSemanticModel(rawElements, layoutEntries, pageMeta) {
     const el = rawElements[i];
     rawByPath.set(el.domPath, el);
     const name = (el.label || el.text || el.alt || el.name || '').trim();
-    const baseSeed = [
-      el.semantic || 'unknown',
-      el.role || '',
-      name.toLowerCase(),
-      el.parentPath || '',
-      el.domPath || '',
-    ].join('|');
+    const baseSeed = [el.semantic || 'unknown', el.role || '', name.toLowerCase(), el.parentPath || '', el.domPath || ''].join('|');
     const ordinal = identityCounts.get(baseSeed) || 0;
     identityCounts.set(baseSeed, ordinal + 1);
     const id = `e_${stableHash(`${baseSeed}|${ordinal}`).slice(0, 8)}`;
 
-    const layoutKey = el.domPath || `${el.selector}|${el.x}|${el.y}`;
-    const layout = layoutByDomPath.get(layoutKey);
     const semanticEl = {
-      id,
-      type: el.semantic || 'text',
-      role: el.role || null,
-      name: name || null,
-      text: el.text || null,
-      value: el.value ?? null,
-      href: el.href || null,
-      placeholder: el.placeholder || null,
-      checked: typeof el.checked === 'boolean' ? el.checked : null,
-      selected: typeof el.selected === 'boolean' ? el.selected : null,
-      disabled: !!el.disabled,
-      required: !!el.required,
-      expanded: !!el.expanded,
-      visible: true,
-      parent_id: null,
-      children: [],
-      grid_ref: layout && layout.ref !== null ? layout.ref : null,
-      grid_bounds: layout ? {
-        row: layout.row,
-        col_start: layout.colStart,
-        col_end: layout.colEnd,
-      } : null,
-      selector: el.selector,
-      path: el.domPath,
-      // Future hooks: action routing and structural diff matching.
-      actions: el.interactive ? ['click'] : [],
+      id, type: el.semantic || 'text', role: el.role || null, name: name || null,
+      text: el.text || null, value: el.value ?? null, href: el.href || null,
+      placeholder: el.placeholder || null, checked: typeof el.checked === 'boolean' ? el.checked : null,
+      selected: typeof el.selected === 'boolean' ? el.selected : null, disabled: !!el.disabled,
+      required: !!el.required, expanded: !!el.expanded, visible: true,
+      parent_id: null, children: [], grid_ref: null, grid_bounds: null,
+      selector: el.selector, path: el.domPath, actions: el.interactive ? ['click'] : [],
     };
-
-    if (semanticEl.type === 'input' || semanticEl.type === 'textarea' || semanticEl.type === 'select') {
-      semanticEl.actions.push('type');
-    }
-    if (semanticEl.type === 'select') {
-      semanticEl.actions.push('select');
-    }
-
+    if (['input', 'textarea', 'select'].includes(semanticEl.type)) semanticEl.actions.push('type');
+    if (semanticEl.type === 'select') semanticEl.actions.push('select');
     byPath.set(el.domPath, semanticEl);
     elements.push(semanticEl);
   }
 
   for (const el of elements) {
     const raw = rawByPath.get(el.path);
-    const parentPath = raw ? raw.parentPath : null;
+    const parentPath = raw?.parentPath;
     if (!parentPath) continue;
     const parent = byPath.get(parentPath);
-    if (parent) {
-      el.parent_id = parent.id;
-      parent.children.push(el.id);
-    }
+    if (parent) { el.parent_id = parent.id; parent.children.push(el.id); }
   }
 
-  return {
-    mode: 'semantic',
-    url: pageMeta.url || null,
-    title: pageMeta.title || null,
-    elements,
-  };
+  return { mode: 'semantic', url: pageMeta.url || null, title: pageMeta.title || null, elements };
 }
 
-/**
- * Detect row boundaries — groups of elements that share the same Y position
- * This prevents text from different elements on the same visual line from overlapping
- */
-function groupByRows(elements, charH) {
-  const rows = [];
-  let currentRow = [];
-  let currentY = -Infinity;
-  const threshold = charH * 0.4; // elements within 40% of line height are on the same row
-
-  for (const el of elements) {
-    if (Math.abs(el.y - currentY) > threshold && currentRow.length > 0) {
-      rows.push(currentRow);
-      currentRow = [];
-    }
-    currentRow.push(el);
-    currentY = el.y;
-  }
-  if (currentRow.length > 0) rows.push(currentRow);
-  return rows;
+function getAction(semantic) {
+  const actions = { link: 'navigate', button: 'click', input: 'type', textarea: 'type', select: 'select', checkbox: 'toggle', radio: 'select', file: 'upload' };
+  return actions[semantic] || 'click';
 }
 
-/**
- * Build the display string for an element, assigning refs for interactive ones
- */
-function formatElement(el, ref, cols, startCol, charW) {
-  switch (el.semantic) {
-    case 'heading': {
-      const bar = el.headingLevel <= 2 ? '═' : '─';
-      const prefix = ref !== null ? `[${ref}]` : '';
-      const title = el.text.toUpperCase();
-      return `${prefix}${bar.repeat(2)} ${title} ${bar.repeat(Math.max(2, cols - startCol - title.length - 6))}`;
-    }
-    case 'link':
-      return `[${ref}]${el.text}`;
-    case 'button':
-      return `[${ref} ${el.text}]`;
-    case 'input': {
-      const w = Math.min(25, Math.max(5, Math.round(el.w / charW) - 6));
-      return `[${ref}:${el.text || '_'.repeat(w)}]`;
-    }
-    case 'textarea': {
-      const w = Math.min(40, Math.max(5, Math.round(el.w / charW) - 6));
-      return `[${ref}:${el.text || '_'.repeat(w)}]`;
-    }
-    case 'checkbox':
-      return `[${ref}:${el.checked ? 'X' : ' '}] ${el.text}`;
-    case 'radio':
-      return `[${ref}:${el.checked ? '●' : '○'}] ${el.text}`;
-    case 'select':
-      return `[${ref}:▼ ${el.text}]`;
-    case 'file':
-      return `[${ref}:📎 ${el.text || 'Choose file'}]`;
-    case 'separator': {
-      const width = Math.min(cols - startCol, Math.round(el.w / charW));
-      return '─'.repeat(Math.max(3, width));
-    }
-    case 'listitem':
-      return (ref !== null ? `[${ref}]` : '') + `• ${el.text}`;
-    default:
-      return (ref !== null ? `[${ref}]` : '') + el.text;
-  }
+function escapeForLLM(str) {
+  if (!str) return '';
+  return str.replace(/([*_`<>\\])/g, '\\$1').replace(/\n+/g, ' ');
 }
 
-/**
- * Render extracted elements into a text grid.
- * 
- * Strategy:
- * 1. Group elements into visual rows (same Y position ± threshold)
- * 2. Within each visual row, sort by X and lay out left-to-right with spacing
- * 3. Each visual row maps to one or more grid lines
- */
-function renderGrid(elements, cols, charW, charH, scrollY = 0, viewport_height, options = {}) {
-  const { includeLayout = false } = options;
-  const elementMap = {};
-  let refId = 0;
-  const lines = []; // output lines as strings
-  const layout = [];
-  const pageH = viewport_height;
-  //console.log(`Renderer scrolly ${scrollY}`)
-  // Filter to viewport
-  const visible = elements.filter(el => {
-    const adjY = el.y - scrollY;
-    //console.log(`Element ${el.y} scrollY ${scrollY} charH ${charH} pageH ${pageH}`);
-    return (adjY + el.h >= 0) && (adjY + el.h < pageH);
-  });
+// ─── Enhanced Extraction: Text Containers + Orphan Interactives ──────────────
+async function extractParagraphs(page, scrollY, viewportHeight) {
+  return await page.evaluate(({ scrollY, viewportHeight }) => {
+    const results = [];
+    const interactiveSelector = 'a[href], button, input, select, textarea, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"])';
+    const textContainerSelector = 'p, li, td, th, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6';
 
-  // Group into visual rows
-  const visualRows = groupByRows(visible, charH);
+    // 1. Collect ALL visible interactives first
+    const allInteractives = [];
+    document.querySelectorAll(interactiveSelector).forEach(el => {
+      const rect = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) return;
+      if (rect.width === 0 || rect.height === 0) return;
 
-  for (const rowElements of visualRows) {
-    const rowIndex = lines.length;
-    // Sort elements in this row by X position (left to right)
-    rowElements.sort((a, b) => a.x - b.x);
+      const top = rect.top + window.scrollY;
+      if (viewportHeight !== null && (top < scrollY || top > scrollY + viewportHeight)) return;
 
-    // Build this row's text by placing each element at its column position
-    let line = '';
-    let cursor = 0; // current character position in the line
-
-    for (const el of rowElements) {
-      const targetCol = Math.max(0, Math.round(el.x / charW));
-
-      // Assign ref for interactive elements
-      let ref = null;
-      if (el.interactive) {
-        ref = refId++;
-        elementMap[ref] = {
-          selector: el.selector,
-          tag: el.tag,
-          semantic: el.semantic,
-          href: el.href,
-          text: el.text,
-          label: el.label || '',
-          x: el.x,
-          y: el.y,
-        };
+      // Get meaningful text for the element
+      let text = '';
+      if (el.tagName === 'INPUT') {
+        text = el.value || el.placeholder || el.name || el.id || '[input]';
+      } else if (el.tagName === 'SELECT') {
+        text = el.options?.[el.selectedIndex]?.text || el.name || '[select]';
+      } else if (el.tagName === 'TEXTAREA') {
+        text = el.value || el.placeholder || '[textarea]';
+      } else {
+        text = el.innerText?.trim() || el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent?.trim() || '[button]';
       }
+      if (!text) return;
 
-      const display = formatElement(el, ref, cols, targetCol, charW);
-      if (!display) continue;
+      allInteractives.push({
+        el, text,
+        selector: buildSimpleSelector(el),
+        href: el.tagName === 'A' ? (el.href || el.getAttribute('href')) : null,
+        x: rect.left + window.scrollX, y: top, w: rect.width, h: rect.height,
+        tag: el.tagName.toLowerCase(), type: el.type || null, name: el.name || null,
+        placeholder: el.placeholder || null, value: el.value || null,
+      });
+    });
 
-      let startCol = cursor;
-      if (targetCol > cursor) {
-        // Pad with spaces to reach the target column
-        line += ' '.repeat(targetCol - cursor);
-        cursor = targetCol;
-        startCol = cursor;
-      } else if (cursor > 0 && targetCol <= cursor) {
-        // Elements overlap — add a single space separator
-        line += ' ';
-        cursor += 1;
-        startCol = cursor;
-      }
+    // 2. Extract text containers with their interactives
+    const usedInteractives = new Set();
+    const containers = document.querySelectorAll(textContainerSelector);
 
-      line += display;
-      cursor += display.length;
+    for (const container of containers) {
+      const rect = container.getBoundingClientRect();
+      const style = getComputedStyle(container);
+      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) continue;
+      if (rect.width === 0 || rect.height === 0) continue;
 
-      if (includeLayout) {
-        layout.push({
-          ref,
-          row: rowIndex,
-          colStart: startCol,
-          colEnd: cursor - 1,
-          selector: el.selector,
-          domPath: el.domPath,
-          semantic: el.semantic,
-          x: el.x,
-          y: el.y,
+      const top = rect.top + window.scrollY;
+      if (viewportHeight !== null && top > scrollY + viewportHeight) continue;
+
+      const text = container.innerText?.trim();
+      if (!text) continue;
+
+      const containerInteractives = allInteractives.filter(item => {
+        if (usedInteractives.has(item.el)) return false;
+        return container.contains(item.el);
+      });
+
+      containerInteractives.forEach(item => usedInteractives.add(item.el));
+
+      results.push({
+        text, interactives: containerInteractives, y: top,
+        tag: container.tagName.toLowerCase(),
+        isHeading: /^H[1-6]$/.test(container.tagName),
+        headingLevel: container.tagName.match(/^H(\d)$/)?.[1] || null,
+      });
+    }
+
+    // 3. KEY FIX: Capture orphaned interactives (forms, standalone buttons, etc.)
+    for (const item of allInteractives) {
+      if (!usedInteractives.has(item.el)) {
+        // Check if it's inside a form or other structural container
+        const parentForm = item.el.closest('form');
+        const parentContainer = parentForm || item.el.parentElement;
+
+        results.push({
+          text: item.text,
+          interactives: [item],
+          y: item.y,
+          tag: parentContainer?.tagName.toLowerCase() || 'div',
+          isHeading: false,
+          headingLevel: null,
+          isOrphanInteractive: true, // Flag for special rendering
         });
       }
     }
 
-    lines.push(line.trimEnd());
+    // 4. Also capture standalone forms with their structure
+    document.querySelectorAll('form').forEach(form => {
+      const rect = form.getBoundingClientRect();
+      const style = getComputedStyle(form);
+      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) return;
+      if (rect.width === 0 || rect.height === 0) return;
+
+      const top = rect.top + window.scrollY;
+      if (viewportHeight !== null && (top < scrollY || top > scrollY + viewportHeight)) return;
+
+      // Check if this form's inputs are already captured
+      const formInputs = Array.from(form.querySelectorAll('input, button, select, textarea'));
+      const hasUncaptured = formInputs.some(input => !usedInteractives.has(input));
+
+      if (hasUncaptured) {
+        const formId = form.id || form.name || `form_${results.length}`;
+        results.push({
+          text: `[Form: ${formId}]`,
+          interactives: formInputs.map(input => {
+            const inputRect = input.getBoundingClientRect();
+            const inputTop = inputRect.top + window.scrollY;
+            return {
+              el: input,
+              text: input.value || input.placeholder || input.name || input.id || `[${input.tagName.toLowerCase()}]`,
+              selector: buildSimpleSelector(input),
+              href: null,
+              x: inputRect.left + window.scrollX, y: inputTop,
+              w: inputRect.width, h: inputRect.height,
+              tag: input.tagName.toLowerCase(), type: input.type || null,
+              name: input.name || null, placeholder: input.placeholder || null, value: input.value || null,
+            };
+          }).filter(item => item.text && !usedInteractives.has(item.el)),
+          y: top,
+          tag: 'form',
+          isHeading: false,
+          headingLevel: null,
+          isForm: true,
+        });
+      }
+    });
+
+    results.sort((a, b) => a.y - b.y);
+    return results;
+
+function buildSimpleSelector(el) {
+  // Priority 1: ID (most stable)
+  if (el.id) return '#' + CSS.escape(el.id);
+
+  // Priority 2: Test attributes (framework-specific but very stable)
+  for (const attr of ['data-testid', 'data-test', 'data-cy', 'data-test-id']) {
+    const val = el.getAttribute(attr);
+    if (val) return `[${attr}="${CSS.escape(val)}"]`;
   }
 
-  // Remove trailing empty lines
-  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  // Priority 3: ARIA label (explicitly set by developers)
+  const ariaLabel = el.getAttribute('aria-label');
+  if (ariaLabel) {
+    const sel = `${el.tagName.toLowerCase()}[aria-label="${CSS.escape(ariaLabel)}"]`;
+    if (document.querySelectorAll(sel).length === 1) return sel;
+  }
 
-  const result = {
-    view: lines.join('\n'),
+  const tag = el.tagName.toLowerCase();
+
+  // Priority 4: Links with href
+  if (tag === 'a' && el.href && !el.href.startsWith('javascript:')) {
+    const href = el.getAttribute('href') || el.href;
+    if (href && href !== '#') {
+      const sel = `a[href="${CSS.escape(href)}"]`;
+      if (document.querySelectorAll(sel).length === 1) return sel;
+    }
+  }
+
+  // Priority 5: Form elements with name attribute
+  if (el.name) {
+    const sel = `${tag}[name="${CSS.escape(el.name)}"]`;
+    if (document.querySelectorAll(sel).length === 1) return sel;
+  }
+
+  // Priority 6: Input type + value combination (great for buttons)
+  if (tag === 'input' && el.type) {
+    const type = el.type.toLowerCase();
+    const value = el.value?.trim();
+
+    // For submit/reset/button inputs, value is often unique
+    if (['submit', 'reset', 'button'].includes(type) && value) {
+      const sel = `input[type="${type}"][value="${CSS.escape(value)}"]`;
+      if (document.querySelectorAll(sel).length === 1) return sel;
+    }
+
+    // For text/search inputs, combine type + name/placeholder
+    if (['text', 'search', 'email', 'password'].includes(type)) {
+      if (el.name) return `input[type="${type}"][name="${CSS.escape(el.name)}"]`;
+      if (el.placeholder) {
+        const sel = `input[type="${type}"][placeholder="${CSS.escape(el.placeholder)}"]`;
+        if (document.querySelectorAll(sel).length === 1) return sel;
+      }
+    }
+
+    // Fallback for inputs: at least include type
+    return `input[type="${type}"]`;
+  }
+
+  // Priority 7: Buttons with unique text content
+  if (tag === 'button' && el.textContent?.trim()) {
+    const text = el.textContent.trim().substring(0, 50);
+    const sel = `button:${CSS.escape(text)}`;
+    // Note: text selector isn't standard CSS, so fallback to attribute
+    if (el.getAttribute('value')) {
+      const sel2 = `button[value="${CSS.escape(el.getAttribute('value'))}"]`;
+      if (document.querySelectorAll(sel2).length === 1) return sel2;
+    }
+  }
+
+  // Priority 8: Class name if it appears unique on the page
+  if (el.className && typeof el.className === 'string') {
+    const classes = el.className.trim().split(/\s+/).filter(c => c && !/^[\d-]/.test(c));
+    for (const cls of classes) {
+      const sel = `${tag}.${CSS.escape(cls)}`;
+      if (document.querySelectorAll(sel).length === 1) return sel;
+    }
+  }
+
+  // Priority 9: Positional fallback (least stable but better than just "input")
+  const parent = el.parentElement;
+  if (parent) {
+    const siblings = Array.from(parent.children).filter(c => c.tagName === el.tagName);
+    if (siblings.length > 1) {
+      const idx = siblings.indexOf(el) + 1;
+      const parentSel = parent.id ? `#${CSS.escape(parent.id)}` : parent.tagName.toLowerCase();
+      return `${parentSel} > ${tag}:nth-of-type(${idx})`;
+    }
+  }
+
+  // Last resort: tag + type attribute if available
+  if (el.type) return `${tag}[type="${el.type}"]`;
+
+  return tag;
+}
+  }, { scrollY, viewportHeight });
+}
+
+// ─── Render with Support for Orphan Interactives ─────────────────────────────
+function renderParagraphs(paragraphs, options = {}) {
+  const { refStart = 1, includeReferences = true } = options;
+  let md = '';
+  let refId = refStart;
+  const elementMap = {};
+
+  for (const p of paragraphs) {
+    // Headings
+    if (p.isHeading) {
+      const level = Math.min(6, p.headingLevel || 2);
+      md += `\n${'#'.repeat(level)} ${escapeForLLM(p.text)}\n\n`;
+      continue;
+    }
+
+
+    // Orphan interactive (standalone button/input)
+    if (p.isOrphanInteractive && p.interactives.length > 0) {
+      for (const item of p.interactives) {
+        if (!item.text?.trim()) continue;
+        const ref = refId++;
+        elementMap[ref] = buildElementMapEntry(item, ref);
+
+        let display = `[${ref}] ${item.text}`;
+        if (item.tag === 'input' && (item.type === 'submit' || item.type === 'button')) {
+          display = `[${ref}] [${item.text}]`;
+        }
+        md += `${display}\n\n`;
+      }
+      continue;
+    }
+
+    // Regular text paragraph with embedded references
+    let text = p.text.replace(/\u00A0/g, ' ');
+
+    if (includeReferences && p.interactives.length > 0) {
+      const replacements = [];
+
+      for (const item of p.interactives) {
+        const itemText = item.text.trim();
+        if (!itemText) continue;
+
+        const ref = refId++;
+        const placeholder = `@@REF_${ref}@@`;
+        elementMap[ref] = buildElementMapEntry(item, ref);
+
+        // Flexible boundary matching
+        const escaped = itemText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`(^|\\s|\\()(${escaped})(\\s|\\.|,|:|;|!|\\?|\\)|$)`);
+        const match = text.match(regex);
+
+        if (match) {
+          text = text.replace(regex, `${match[1]}${placeholder}${match[3]}`);
+          replacements.push({ placeholder, originalText: itemText, ref });
+        }
+      }
+
+      for (const { placeholder, originalText, ref } of replacements) {
+        text = text.split(placeholder).join(`${originalText}[${ref}]`);
+      }
+    }
+
+    const cleaned = text.replace(/\s+/g, ' ').trim();
+    if (cleaned) {
+      md += escapeForLLM(cleaned) + '\n\n';
+    }
+  }
+
+  return { markdown: md.trim(), elementMap, totalRefs: refId - refStart };
+}
+
+function buildElementMapEntry(item, ref) {
+  return {
+    selector: item.selector,
+    tag: item.tag,
+    semantic: item.tag === 'a' ? 'link' :
+             item.tag === 'button' || (item.tag === 'input' && ['submit', 'button'].includes(item.type)) ? 'button' :
+             item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.type :
+             item.tag,
+    href: item.href,
+    text: item.text,
+    label: item.text,
+    x: item.x, y: item.y, w: item.w, h: item.h,
+    action: getAction(item.tag === 'a' ? 'link' : item.tag),
+    disabled: false,
+    checked: item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? !!item.checked : null,
+    selected: item.tag === 'select' ? !!item.selected : null,
+    required: false,
+    value: item.value,
+    placeholder: item.placeholder,
+    name: item.name,
+    type: item.type,
+  };
+}
+
+// ─── Main Render Function ────────────────────────────────────────────────────
+async function renderMarkdown(page, options = {}) {
+  const {
+    includeReferences = true,
+    refStart = 1,
+    scrollY = 0,
+    viewportHeight = null,
+  } = options;
+
+  const vpH = viewportHeight ?? null;
+  const pageMeta = {
+    url: await page.url(),
+    title: await page.title(),
+  };
+
+  const paragraphs = await extractParagraphs(page, scrollY, vpH);
+  const { markdown, elementMap, totalRefs } = renderParagraphs(paragraphs, { refStart, includeReferences });
+
+  const allElements = await extractElements(page).catch(() => []);
+  const semanticModel = buildSemanticModel(allElements, [], pageMeta);
+
+  return {
+    view: markdown,
     elements: elementMap,
-    meta: { cols, rows: lines.length, scrollY, totalRefs: refId, charW, charH }
+    meta: {
+      cols: 80, rows: markdown.split('\n').length, scrollY, viewportHeight: vpH,
+      totalRefs, charW: 1, charH: 1,
+      totalElements: allElements.length, interactiveElements: totalRefs,
+      url: pageMeta.url, title: pageMeta.title, renderMs: 0,
+    },
+    semantic: semanticModel
   };
-  if (includeLayout) result.layout = layout;
-  return result;
 }
 
-/**
- * Main render function: page → text grid
- */
-async function render(page, options = {}) {
-  const { cols = 120, scrollY = 0, viewport_height = 1800 } = options;
-  const startMs = Date.now();
-  
-  // Measure actual font metrics from the page
-  const metrics = await measureCharSize(page);
-  const charW = metrics.charW;
-  const charH = metrics.charH;
-  
-  const elements = await extractElements(page);
-  const gridResult = renderGrid(elements, cols, charW, charH, scrollY, viewport_height, { includeLayout: true });
-  const result = {
-    view: gridResult.view,
-    elements: gridResult.elements,
-    meta: gridResult.meta,
-  };
-  
-  // Add stats to meta
-  result.meta.stats = {
-    totalElements: elements.length,
-    interactiveElements: result.meta.totalRefs,
-    renderMs: Date.now() - startMs,
-  };
-
-  result.semantic = buildSemanticModel(elements, gridResult.layout || [], result.meta);
-  
-  return result;
-}
-
-module.exports = { render, extractElements, renderGrid, measureCharSize, buildSemanticModel };
+// ─── Exports ─────────────────────────────────────────────────────────────────
+module.exports = { renderMarkdown };
