@@ -1,10 +1,8 @@
 /**
- * TextWeb Text Markdown Renderer
- * 
- * Converts a rendered web page into a structured Markdown document with
- * interactive element references.
- */
-
+TextWeb Text Markdown Renderer
+Converts a rendered web page into a structured Markdown document with
+interactive element references.
+*/
 // ─── Helpers (unchanged from previous version) ───────────────────────────────
 function stableHash(input) {
   let hash = 5381;
@@ -14,6 +12,7 @@ function stableHash(input) {
   }
   return (hash >>> 0).toString(36);
 }
+
 function getAction(semantic) {
   const actions = { link: 'navigate', button: 'click', input: 'type', textarea: 'type', select: 'select', checkbox: 'toggle', radio: 'select', file: 'upload' };
   return actions[semantic] || 'click';
@@ -27,11 +26,78 @@ function escapeForLLM(str) {
 // ─── Enhanced Extraction: Text Containers + Orphan Interactives ──────────────
 async function extractParagraphs(page, scrollY, viewportHeight) {
   return await page.evaluate(({ scrollY, viewportHeight }) => {
+    // 1. Define buildSimpleSelector FIRST so it's available in scope
+    function buildSimpleSelector(el) {
+      if (el.id) return '#' + CSS.escape(el.id);
+      for (const attr of ['data-testid', 'data-test', 'data-cy', 'data-test-id']) {
+        const val = el.getAttribute(attr);
+        if (val) return `[${attr}="${CSS.escape(val)}"]`;
+      }
+      const ariaLabel = el.getAttribute('aria-label');
+      if (ariaLabel) {
+        const sel = `${el.tagName.toLowerCase()}[aria-label="${CSS.escape(ariaLabel)}"]`;
+        if (document.querySelectorAll(sel).length === 1) return sel;
+      }
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'a' && el.href && !el.href.startsWith('javascript:')) {
+        const href = el.getAttribute('href') || el.href;
+        if (href && href !== '#') {
+          const sel = `a[href="${CSS.escape(href)}"]`;
+          if (document.querySelectorAll(sel).length === 1) return sel;
+        }
+      }
+      if (el.name) {
+        const sel = `${tag}[name="${CSS.escape(el.name)}"]`;
+        if (document.querySelectorAll(sel).length === 1) return sel;
+      }
+      if (tag === 'input' && el.type) {
+        const type = el.type.toLowerCase();
+        const value = el.value?.trim();
+        if (['submit', 'reset', 'button'].includes(type) && value) {
+          const sel = `input[type="${type}"][value="${CSS.escape(value)}"]`;
+          if (document.querySelectorAll(sel).length === 1) return sel;
+        }
+        if (['text', 'search', 'email', 'password'].includes(type)) {
+          if (el.name) return `input[type="${type}"][name="${CSS.escape(el.name)}"]`;
+          if (el.placeholder) {
+            const sel = `input[type="${type}"][placeholder="${CSS.escape(el.placeholder)}"]`;
+            if (document.querySelectorAll(sel).length === 1) return sel;
+          }
+        }
+        return `input[type="${type}"]`;
+      }
+      if (tag === 'button' && el.textContent?.trim()) {
+        const text = el.textContent.trim().substring(0, 50);
+        if (el.getAttribute('value')) {
+          const sel2 = `button[value="${CSS.escape(el.getAttribute('value'))}"]`;
+          if (document.querySelectorAll(sel2).length === 1) return sel2;
+        }
+      }
+      if (el.className && typeof el.className === 'string') {
+        const classes = el.className.trim().split(/\s+/).filter(c => c && !/^[\d-]/.test(c));
+        for (const cls of classes) {
+          const sel = `${tag}.${CSS.escape(cls)}`;
+          if (document.querySelectorAll(sel).length === 1) return sel;
+        }
+      }
+      const parent = el.parentElement;
+      if (parent) {
+        const siblings = Array.from(parent.children).filter(c => c.tagName === el.tagName);
+        if (siblings.length > 1) {
+          const idx = siblings.indexOf(el) + 1;
+          const parentSel = parent.id ? `#${CSS.escape(parent.id)}` : parent.tagName.toLowerCase();
+          return `${parentSel} > ${tag}:nth-of-type(${idx})`;
+        }
+      }
+      if (el.type) return `${tag}[type="${el.type}"]`;
+      return tag;
+    }
+
     const results = [];
     const interactiveSelector = 'a[href], button, input, select, textarea, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"])';
     const textContainerSelector = 'p, li, td, th, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, article';
 
-    // 1. Collect ALL visible interactives first
+    // 2. Collect ALL visible interactives first
     const allInteractives = [];
     document.querySelectorAll(interactiveSelector).forEach(el => {
       const rect = el.getBoundingClientRect();
@@ -42,7 +108,6 @@ async function extractParagraphs(page, scrollY, viewportHeight) {
       const top = rect.top + window.scrollY;
       if (viewportHeight !== null && (top < scrollY || top > scrollY + viewportHeight)) return;
 
-      // Get meaningful text for the element
       let text = '';
       if (el.tagName === 'INPUT') {
         text = el.value || el.placeholder || el.name || el.id || '[input]';
@@ -65,11 +130,19 @@ async function extractParagraphs(page, scrollY, viewportHeight) {
       });
     });
 
-    // 2. Extract text containers with their interactives
+    // 3. Extract text containers with their interactives
     const usedInteractives = new Set();
-    const containers = document.querySelectorAll(textContainerSelector);
+    const allContainers = Array.from(document.querySelectorAll(textContainerSelector));
 
-    for (const container of containers) {
+    // Filter: keep containers NOT nested inside another matched text container
+    const filteredContainers = allContainers.filter(container => {
+      return !allContainers.some(other =>
+        other !== container &&
+        other.contains(container)
+      );
+    });
+
+    for (const container of filteredContainers) {
       const rect = container.getBoundingClientRect();
       const style = getComputedStyle(container);
       if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) continue;
@@ -98,7 +171,7 @@ async function extractParagraphs(page, scrollY, viewportHeight) {
       });
     }
 
-    // 3. KEY FIX: Capture orphaned interactives (forms, standalone buttons, etc.)
+    // 4. Capture orphaned interactives
     for (const item of allInteractives) {
       if (!usedInteractives.has(item.el)) {
         // Check if it's inside a form or other structural container
@@ -117,104 +190,19 @@ async function extractParagraphs(page, scrollY, viewportHeight) {
       }
     }
 
-    results.sort((a, b) => a.y - b.y);
-
-    return results;
-
-function buildSimpleSelector(el) {
-  // Priority 1: ID (most stable)
-  if (el.id) return '#' + CSS.escape(el.id);
-
-  // Priority 2: Test attributes (framework-specific but very stable)
-  for (const attr of ['data-testid', 'data-test', 'data-cy', 'data-test-id']) {
-    const val = el.getAttribute(attr);
-    if (val) return `[${attr}="${CSS.escape(val)}"]`;
-  }
-
-  // Priority 3: ARIA label (explicitly set by developers)
-  const ariaLabel = el.getAttribute('aria-label');
-  if (ariaLabel) {
-    const sel = `${el.tagName.toLowerCase()}[aria-label="${CSS.escape(ariaLabel)}"]`;
-    if (document.querySelectorAll(sel).length === 1) return sel;
-  }
-
-  const tag = el.tagName.toLowerCase();
-
-  // Priority 4: Links with href
-  if (tag === 'a' && el.href && !el.href.startsWith('javascript:')) {
-    const href = el.getAttribute('href') || el.href;
-    if (href && href !== '#') {
-      const sel = `a[href="${CSS.escape(href)}"]`;
-      if (document.querySelectorAll(sel).length === 1) return sel;
-    }
-  }
-
-  // Priority 5: Form elements with name attribute
-  if (el.name) {
-    const sel = `${tag}[name="${CSS.escape(el.name)}"]`;
-    if (document.querySelectorAll(sel).length === 1) return sel;
-  }
-
-  // Priority 6: Input type + value combination (great for buttons)
-  if (tag === 'input' && el.type) {
-    const type = el.type.toLowerCase();
-    const value = el.value?.trim();
-
-    // For submit/reset/button inputs, value is often unique
-    if (['submit', 'reset', 'button'].includes(type) && value) {
-      const sel = `input[type="${type}"][value="${CSS.escape(value)}"]`;
-      if (document.querySelectorAll(sel).length === 1) return sel;
+    // 5. Smart deduplication: remove identical text+link within 50px vertical range
+    const unique = [];
+    for (const item of results) {
+      const isDuplicate = unique.some(u => {
+        const sameText = u.text === item.text;
+        const closeVertically = Math.abs(u.y - item.y) < 50;
+        const sameLink = u.interactives[0]?.href === item.interactives[0]?.href;
+        return sameText && closeVertically && sameLink;
+      });
+      if (!isDuplicate) unique.push(item);
     }
 
-    // For text/search inputs, combine type + name/placeholder
-    if (['text', 'search', 'email', 'password'].includes(type)) {
-      if (el.name) return `input[type="${type}"][name="${CSS.escape(el.name)}"]`;
-      if (el.placeholder) {
-        const sel = `input[type="${type}"][placeholder="${CSS.escape(el.placeholder)}"]`;
-        if (document.querySelectorAll(sel).length === 1) return sel;
-      }
-    }
-
-    // Fallback for inputs: at least include type
-    return `input[type="${type}"]`;
-  }
-
-  // Priority 7: Buttons with unique text content
-  if (tag === 'button' && el.textContent?.trim()) {
-    const text = el.textContent.trim().substring(0, 50);
-    const sel = `button:${CSS.escape(text)}`;
-    // Note: text selector isn't standard CSS, so fallback to attribute
-    if (el.getAttribute('value')) {
-      const sel2 = `button[value="${CSS.escape(el.getAttribute('value'))}"]`;
-      if (document.querySelectorAll(sel2).length === 1) return sel2;
-    }
-  }
-
-  // Priority 8: Class name if it appears unique on the page
-  if (el.className && typeof el.className === 'string') {
-    const classes = el.className.trim().split(/\s+/).filter(c => c && !/^[\d-]/.test(c));
-    for (const cls of classes) {
-      const sel = `${tag}.${CSS.escape(cls)}`;
-      if (document.querySelectorAll(sel).length === 1) return sel;
-    }
-  }
-
-  // Priority 9: Positional fallback (least stable but better than just "input")
-  const parent = el.parentElement;
-  if (parent) {
-    const siblings = Array.from(parent.children).filter(c => c.tagName === el.tagName);
-    if (siblings.length > 1) {
-      const idx = siblings.indexOf(el) + 1;
-      const parentSel = parent.id ? `#${CSS.escape(parent.id)}` : parent.tagName.toLowerCase();
-      return `${parentSel} > ${tag}:nth-of-type(${idx})`;
-    }
-  }
-
-  // Last resort: tag + type attribute if available
-  if (el.type) return `${tag}[type="${el.type}"]`;
-
-  return tag;
-}
+    return unique.sort((a, b) => a.y - b.y);
   }, { scrollY, viewportHeight });
 }
 
@@ -226,21 +214,17 @@ function renderParagraphs(paragraphs, options = {}) {
   const elementMap = {};
 
   for (const p of paragraphs) {
-    // Headings
     if (p.isHeading) {
       const level = Math.min(6, p.headingLevel || 2);
       md += `\n${'#'.repeat(level)} ${escapeForLLM(p.text)}\n\n`;
       continue;
     }
 
-
-    // Orphan interactive (standalone button/input)
     if (p.isOrphanInteractive && p.interactives.length > 0) {
       for (const item of p.interactives) {
         if (!item.text?.trim()) continue;
         const ref = refId++;
         elementMap[ref] = buildElementMapEntry(item, ref);
-
         let display = `[${ref}] ${item.text}`;
         if (item.tag === 'input' && (item.type === 'submit' || item.type === 'button')) {
           display = `[${ref}] [${item.text}]`;
@@ -285,7 +269,6 @@ function renderParagraphs(paragraphs, options = {}) {
       md += escapeForLLM(cleaned) + '\n\n';
     }
   }
-
   return { markdown: md.trim(), elementMap, totalRefs: refId - refStart };
 }
 
@@ -294,9 +277,9 @@ function buildElementMapEntry(item, ref) {
     selector: item.selector,
     tag: item.tag,
     semantic: item.tag === 'a' ? 'link' :
-             item.tag === 'button' || (item.tag === 'input' && ['submit', 'button'].includes(item.type)) ? 'button' :
-             item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.type :
-             item.tag,
+      item.tag === 'button' || (item.tag === 'input' && ['submit', 'button'].includes(item.type)) ? 'button' :
+      item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.type :
+      item.tag,
     href: item.href,
     text: item.text,
     label: item.text,
