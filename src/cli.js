@@ -347,7 +347,7 @@ Interactive Commands:
             if (result && Object.keys(result.elements || {}).length > 0) {
               console.log(`Interactive elements (${Object.keys(result.elements || {}).length}):`);
               for (const [ref, element] of Object.entries(result.elements || {})) {
-                console.log(`[${ref}] ${element.semantic || element.tag}: ${element.text || '(no text)'}`);
+                console.log(`[${ref}] ${element.semantic || element.tag}: ${element.text || '(no text)'}: ${element.href || "no link"}`);
               }
             } else {
               console.log('No interactive elements found');

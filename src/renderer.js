@@ -222,6 +222,7 @@ function renderParagraphs(paragraphs, options = {}) {
 
     if (p.isOrphanInteractive && p.interactives.length > 0) {
       for (const item of p.interactives) {
+        if (item.tag === 'div' || item.tag === 'span' || item.tag === 'section') continue;
         if (!item.text?.trim()) continue;
         const ref = refId++;
         elementMap[ref] = buildElementMapEntry(item, ref);
