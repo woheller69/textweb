@@ -8,10 +8,10 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 // Register the stealth plugin globally
 chromium.use(StealthPlugin());
 
-const DEFAULT_VIEWPORT = { width: 1200, height: 1800 };
+const DEFAULT_VIEWPORT = { width: 800, height: 1800 };
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-const { render } = require('./renderer');
+const { renderMarkdown} = require('./renderer');
 
 class AgentBrowser {
   constructor(options = {}) {
@@ -60,6 +60,16 @@ class AgentBrowser {
   async _createContext(storageStatePath = null) {
     this.context = await this.browser.newContext(this._contextOptions(storageStatePath));
     this.page = await this.context.newPage();
+    await this.page.route("**/*", (route, request) => {
+      if (request.resourceType() === "image") {  //we do not need to download images
+          route.abort();
+      } else if (request.resourceType === "media") { //we do not need audio and video
+        //abort the route
+          route.abort();
+      } else {
+          route.continue();
+      }
+    });
     this.page.setDefaultTimeout(this.defaultTimeout);
   }
 
@@ -98,10 +108,12 @@ class AgentBrowser {
   async snapshot() {
     if (!this.page) throw new Error('No page open. Call navigate() first.');
     this.scrollY = await this.page.evaluate(() => window.scrollY);  //sync with browser window
-    this.lastResult = await render(this.page, {
-      cols: this.cols,
+    this.lastResult = await renderMarkdown(this.page, {
+      includeReferences: true,
+      maxDepth: 4,
+      refStart: 1,
       scrollY: this.scrollY,
-      viewport_height: DEFAULT_VIEWPORT.height
+      viewportHeight: DEFAULT_VIEWPORT.height,
     });
     this.lastResult.meta.url = this.page.url();
     this.lastResult.meta.title = await this.page.title();

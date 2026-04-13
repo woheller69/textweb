@@ -1,17 +1,8 @@
 /**
- * TextWeb Text Grid Renderer
+ * TextWeb Text Markdown Renderer
  * 
- * Converts a rendered web page into a structured text grid with
- * interactive element references. No screenshots, no vision models.
- * 
- * Key design decisions:
- * - Measure actual font metrics from the page
- * - Row-grouping layout (elements grouped by Y position)
- * - Dynamic height (grows to fit all content)
- */
-
-/**
- * Measure actual character dimensions from the page's fonts
+ * Converts a rendered web page into a structured Markdown document with
+ * interactive element references.
  */
 
 /**
@@ -387,7 +378,7 @@ async function extractParagraphs(page, scrollY, viewportHeight) {
   return await page.evaluate(({ scrollY, viewportHeight }) => {
     const results = [];
     const interactiveSelector = 'a[href], button, input, select, textarea, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"])';
-    const textContainerSelector = 'p, li, td, th, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6';
+    const textContainerSelector = 'p, li, td, th, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, article';
 
     // 1. Collect ALL visible interactives first
     const allInteractives = [];
@@ -472,47 +463,6 @@ async function extractParagraphs(page, scrollY, viewportHeight) {
         });
       }
     }
-
-    // 4. Also capture standalone forms with their structure
-    document.querySelectorAll('form').forEach(form => {
-      const rect = form.getBoundingClientRect();
-      const style = getComputedStyle(form);
-      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) return;
-      if (rect.width === 0 || rect.height === 0) return;
-
-      const top = rect.top + window.scrollY;
-      if (viewportHeight !== null && (top < scrollY || top > scrollY + viewportHeight)) return;
-
-      // Check if this form's inputs are already captured
-      const formInputs = Array.from(form.querySelectorAll('input, button, select, textarea'));
-      const hasUncaptured = formInputs.some(input => !usedInteractives.has(input));
-
-      if (hasUncaptured) {
-        const formId = form.id || form.name || `form_${results.length}`;
-        results.push({
-          text: `[Form: ${formId}]`,
-          interactives: formInputs.map(input => {
-            const inputRect = input.getBoundingClientRect();
-            const inputTop = inputRect.top + window.scrollY;
-            return {
-              el: input,
-              text: input.value || input.placeholder || input.name || input.id || `[${input.tagName.toLowerCase()}]`,
-              selector: buildSimpleSelector(input),
-              href: null,
-              x: inputRect.left + window.scrollX, y: inputTop,
-              w: inputRect.width, h: inputRect.height,
-              tag: input.tagName.toLowerCase(), type: input.type || null,
-              name: input.name || null, placeholder: input.placeholder || null, value: input.value || null,
-            };
-          }).filter(item => item.text && !usedInteractives.has(item.el)),
-          y: top,
-          tag: 'form',
-          isHeading: false,
-          headingLevel: null,
-          isForm: true,
-        });
-      }
-    });
 
     results.sort((a, b) => a.y - b.y);
     return results;
