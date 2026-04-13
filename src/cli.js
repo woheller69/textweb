@@ -209,10 +209,10 @@ async function interactive(url, options) {
       console.log(`Navigating to: ${url}`);
       result = await browser.navigate(url);
       console.log(result.view);
-      console.log(`\\nElements: ${Object.keys(result.elements || {}).length} interactive elements found`);
+      console.log(`\nElements: ${Object.keys(result.elements || {}).length} interactive elements found`);
     }
     
-    console.log(`\\nType 'help' for commands, 'quit' to exit`);
+    console.log(`\nType 'help' for commands, 'quit' to exit`);
     rl.prompt();
 
     rl.on('line', async (input) => {

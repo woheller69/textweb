@@ -5,313 +5,6 @@
  * interactive element references.
  */
 
-/**
- * Extract visible elements from a Playwright page with positions and metadata
- */
-async function extractElements(page) {
-  return await page.evaluate(() => {
-    const pageScrollY = window.scrollY || document.documentElement.scrollTop;
-    const pageScrollX = window.scrollX || document.documentElement.scrollLeft;
-    const results = [];
-    const interactiveSelector = 'a[href], button, input, select, textarea, [onclick], [role="button"], [role="link"], [tabindex]:not([tabindex="-1"]), summary';
-
-    function isVisible(el) {
-      const style = getComputedStyle(el);
-      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) return false;
-      const rect = el.getBoundingClientRect();
-      if (rect.width === 0 && rect.height === 0) return false;
-      return true;
-    }
-
-    function getZIndex(el) {
-      let z = 0;
-      let current = el;
-      while (current && current !== document.body) {
-        const style = getComputedStyle(current);
-        const zi = parseInt(style.zIndex);
-        if (!isNaN(zi) && zi > z) z = zi;
-        if (style.position === 'fixed' || style.position === 'sticky') z = Math.max(z, 1000);
-        current = current.parentElement;
-      }
-      return z;
-    }
-
-    function buildSelector(el) {
-      // Build a robust CSS selector for clicking
-      // Priority: id > data-testid > aria > role+name > name > positional
-      if (el.id) return '#' + CSS.escape(el.id);
-
-      const tag = el.tagName.toLowerCase();
-
-      // Stable test attributes (used by many frameworks)
-      for (const attr of ['data-testid', 'data-test', 'data-cy', 'data-test-id']) {
-        const val = el.getAttribute(attr);
-        if (val) return `[${attr}="${val}"]`;
-      }
-
-      // Aria-label (very stable, set by developers intentionally)
-      const ariaLabel = el.getAttribute('aria-label');
-      if (ariaLabel) {
-        const sel = `${tag}[aria-label="${CSS.escape(ariaLabel)}"]`;
-        if (document.querySelectorAll(sel).length === 1) return sel;
-      }
-
-      // Role + name combination
-      const role = el.getAttribute('role');
-      if (role) {
-        const name = ariaLabel || el.textContent.trim().substring(0, 50);
-        if (name) {
-          const sel = `[role="${role}"]`;
-          // Only use if unique enough
-          if (document.querySelectorAll(sel).length === 1) return sel;
-        }
-      }
-
-      // Name attribute (forms)
-      if (el.getAttribute('name')) return `${tag}[name="${el.getAttribute('name')}"]`;
-
-      // href for links (use partial match for stability)
-      if (tag === 'a' && el.href) {
-        const href = el.getAttribute('href');
-        if (href && !href.startsWith('javascript:') && href !== '#') {
-          const sel = `a[href="${CSS.escape(href)}"]`;
-          if (document.querySelectorAll(sel).length === 1) return sel;
-        }
-      }
-
-      // Fallback: positional selector (least stable)
-      const parent = el.parentElement;
-      if (!parent) return tag;
-      const siblings = Array.from(parent.children);
-      const idx = siblings.indexOf(el) + 1;
-      const parentSel = parent.id ? '#' + CSS.escape(parent.id) : buildSelector(parent);
-      return parentSel + ' > ' + tag + ':nth-child(' + idx + ')';
-    }
-
-    function isInteractive(el) {
-      return el.matches(interactiveSelector);
-    }
-
-    function domPath(el) {
-      const parts = [];
-      let current = el;
-      while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.body) {
-        const tag = current.tagName.toLowerCase();
-        let idx = 1;
-        let sib = current;
-        while ((sib = sib.previousElementSibling)) {
-          if (sib.tagName.toLowerCase() === tag) idx++;
-        }
-        parts.push(`${tag}:${idx}`);
-        current = current.parentElement;
-      }
-      parts.push('body:1');
-      return parts.reverse().join('/');
-    }
-
-    // Detect tables and extract their structure
-    const tableData = new Map();
-    document.querySelectorAll('table').forEach(table => {
-      const rect = table.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) return;
-
-      const rows = [];
-      table.querySelectorAll('tr').forEach(tr => {
-        const cells = [];
-        tr.querySelectorAll('td, th').forEach(cell => {
-          const cellRect = cell.getBoundingClientRect();
-          cells.push({
-            x: cellRect.x,
-            y: cellRect.y,
-            w: cellRect.width,
-            h: cellRect.height,
-            text: cell.textContent.trim().slice(0, 200),
-            isHeader: cell.tagName === 'TH',
-            colspan: cell.colSpan || 1,
-          });
-        });
-        if (cells.length > 0) rows.push(cells);
-      });
-
-      tableData.set(table, {
-        rect,
-        rows,
-        colCount: Math.max(...rows.map(r => r.length), 0),
-      });
-    });
-
-    // Walk the DOM tree
-    const walker = document.createTreeWalker(
-      document.body,
-      NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
-      {
-        acceptNode(node) {
-          if (node.nodeType === Node.TEXT_NODE) {
-            return node.textContent.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-          }
-          const el = node;
-          if (!isVisible(el)) return NodeFilter.FILTER_REJECT;
-          // Accept specific non-text elements
-          if (el.matches('input, select, textarea, button, img, hr, br')) {
-            return NodeFilter.FILTER_ACCEPT;
-          }
-          return NodeFilter.FILTER_SKIP;
-        }
-      }
-    );
-
-    while (walker.nextNode()) {
-      const node = walker.currentNode;
-      const isText = node.nodeType === Node.TEXT_NODE;
-      const el = isText ? node.parentElement : node;
-      if (!el) continue;
-
-      let rect;
-      if (isText) {
-        const range = document.createRange();
-        range.selectNodeContents(node);
-        rect = range.getBoundingClientRect();
-      } else {
-        rect = el.getBoundingClientRect();
-      }
-      if (rect.width === 0 && rect.height === 0) continue;
-
-      const tag = el.tagName.toLowerCase();
-      const interactive = isInteractive(el);
-      const role = el.getAttribute('role') || null;
-
-      let text = '';
-      let value = null;
-      if (isText) {
-        text = node.textContent.trim();
-      } else if (tag === 'input') {
-        const type = (el.type || 'text').toLowerCase();
-        text = el.value || el.placeholder || '';
-        value = el.value || '';
-      } else if (tag === 'select') {
-        const opt = el.options && el.options[el.selectedIndex];
-        text = opt ? opt.text : '';
-        value = el.value || '';
-      } else if (tag === 'textarea') {
-        text = el.value || el.placeholder || '';
-        value = el.value || '';
-      } else if (tag === 'img') {
-        text = el.alt || '[img]';
-      } else if (tag === 'hr') {
-        text = '---';
-      }
-
-      // Resolve label for form elements
-      let label = '';
-      if (!isText && (tag === 'input' || tag === 'select' || tag === 'textarea')) {
-        // Strategy 1: <label for="id">
-        if (el.id) {
-          const labelEl = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
-          if (labelEl) label = labelEl.textContent.trim().replace(/\s*\*\s*$/, '').trim();
-        }
-        // Strategy 2: aria-label
-        if (!label && el.getAttribute('aria-label')) {
-          label = el.getAttribute('aria-label');
-        }
-        // Strategy 3: wrapping <label>
-        if (!label) {
-          const parentLabel = el.closest('label');
-          if (parentLabel) label = parentLabel.textContent.trim().replace(/\s*\*\s*$/, '').trim();
-        }
-        // Strategy 4: name attribute as fallback
-        if (!label && el.name) {
-          label = el.name.replace(/[_\-\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-        }
-      }
-
-      // Determine semantic type
-      let semantic = 'text';
-      const headingMatch = tag.match(/^h(\d)$/);
-      if (headingMatch) semantic = 'heading';
-      else if (tag === 'a' && el.href) semantic = 'link';
-      else if (tag === 'button' || el.getAttribute('role') === 'button') semantic = 'button';
-      else if (tag === 'input') {
-        const type = (el.type || 'text').toLowerCase();
-        if (type === 'checkbox') semantic = 'checkbox';
-        else if (type === 'radio') semantic = 'radio';
-        else if (type === 'submit' || type === 'button') semantic = 'button';
-        else if (type === 'file') semantic = 'file';
-        else semantic = 'input';
-      }
-      else if (tag === 'select') semantic = 'select';
-      else if (tag === 'textarea') semantic = 'textarea';
-      else if (tag === 'hr') semantic = 'separator';
-
-      // Check for list context
-      if (el.closest('li') && semantic === 'text') {
-        const li = el.closest('li');
-        const liRect = li.getBoundingClientRect();
-        if (Math.abs(rect.y - liRect.y) < 5) {
-          semantic = 'listitem';
-        }
-      }
-
-      // Check if inside a table cell
-      const closestTd = el.closest('td, th');
-      let tableCell = null;
-      if (closestTd) {
-        const tr = closestTd.closest('tr');
-        const table = closestTd.closest('table');
-        if (tr && table) {
-          tableCell = {
-            cellIndex: Array.from(tr.children).indexOf(closestTd),
-            rowIndex: Array.from(table.querySelectorAll('tr')).indexOf(tr),
-            isHeader: closestTd.tagName === 'TH',
-          };
-        }
-      }
-
-      const parentElement = el.parentElement;
-      const parentInteractive = !!(parentElement && parentElement.matches(interactiveSelector));
-      const parentPath = parentElement ? domPath(parentElement) : null;
-
-      results.push({
-        text,
-        label: label || '',
-        role,
-        tag,
-        semantic,
-        headingLevel: headingMatch ? parseInt(headingMatch[1]) : 0,
-        interactive,
-        isTextNode: isText,
-        checked: !!el.checked,
-        selected: !!el.selected,
-        disabled: !!el.disabled,
-        required: !!el.required,
-        expanded: el.getAttribute('aria-expanded') === 'true',
-        placeholder: el.getAttribute('placeholder') || null,
-        name: el.getAttribute('name') || '',
-        alt: el.getAttribute('alt') || '',
-        value,
-        x: rect.x + pageScrollX,
-        y: rect.y + pageScrollY,
-        w: rect.width,
-        h: rect.height,
-        z: getZIndex(el),
-        href: el.href || null,
-        selector: buildSelector(el),
-        domPath: domPath(el),
-        parentPath,
-        parentInteractive,
-        tableCell,
-      });
-    }
-
-    // Sort by z-index (back to front), then by document position (y, x)
-    results.sort((a, b) => a.z - b.z || a.y - b.y || a.x - b.x);
-    return results;
-  });
-}
-/**
- * TextWeb Markdown Renderer (Robust + Forms Support)
- * Captures flowing text AND standalone inputs/buttons/forms
- */
-
 // ─── Helpers (unchanged from previous version) ───────────────────────────────
 function stableHash(input) {
   let hash = 5381;
@@ -321,48 +14,6 @@ function stableHash(input) {
   }
   return (hash >>> 0).toString(36);
 }
-
-function buildSemanticModel(rawElements, layoutEntries = [], pageMeta = {}) {
-  const elements = [];
-  const byPath = new Map();
-  const rawByPath = new Map();
-  const identityCounts = new Map();
-
-  for (let i = 0; i < rawElements.length; i++) {
-    const el = rawElements[i];
-    rawByPath.set(el.domPath, el);
-    const name = (el.label || el.text || el.alt || el.name || '').trim();
-    const baseSeed = [el.semantic || 'unknown', el.role || '', name.toLowerCase(), el.parentPath || '', el.domPath || ''].join('|');
-    const ordinal = identityCounts.get(baseSeed) || 0;
-    identityCounts.set(baseSeed, ordinal + 1);
-    const id = `e_${stableHash(`${baseSeed}|${ordinal}`).slice(0, 8)}`;
-
-    const semanticEl = {
-      id, type: el.semantic || 'text', role: el.role || null, name: name || null,
-      text: el.text || null, value: el.value ?? null, href: el.href || null,
-      placeholder: el.placeholder || null, checked: typeof el.checked === 'boolean' ? el.checked : null,
-      selected: typeof el.selected === 'boolean' ? el.selected : null, disabled: !!el.disabled,
-      required: !!el.required, expanded: !!el.expanded, visible: true,
-      parent_id: null, children: [], grid_ref: null, grid_bounds: null,
-      selector: el.selector, path: el.domPath, actions: el.interactive ? ['click'] : [],
-    };
-    if (['input', 'textarea', 'select'].includes(semanticEl.type)) semanticEl.actions.push('type');
-    if (semanticEl.type === 'select') semanticEl.actions.push('select');
-    byPath.set(el.domPath, semanticEl);
-    elements.push(semanticEl);
-  }
-
-  for (const el of elements) {
-    const raw = rawByPath.get(el.path);
-    const parentPath = raw?.parentPath;
-    if (!parentPath) continue;
-    const parent = byPath.get(parentPath);
-    if (parent) { el.parent_id = parent.id; parent.children.push(el.id); }
-  }
-
-  return { mode: 'semantic', url: pageMeta.url || null, title: pageMeta.title || null, elements };
-}
-
 function getAction(semantic) {
   const actions = { link: 'navigate', button: 'click', input: 'type', textarea: 'type', select: 'select', checkbox: 'toggle', radio: 'select', file: 'upload' };
   return actions[semantic] || 'click';
@@ -438,7 +89,9 @@ async function extractParagraphs(page, scrollY, viewportHeight) {
       containerInteractives.forEach(item => usedInteractives.add(item.el));
 
       results.push({
-        text, interactives: containerInteractives, y: top,
+        text,
+        interactives: containerInteractives,
+        y: top,
         tag: container.tagName.toLowerCase(),
         isHeading: /^H[1-6]$/.test(container.tagName),
         headingLevel: container.tagName.match(/^H(\d)$/)?.[1] || null,
@@ -465,6 +118,7 @@ async function extractParagraphs(page, scrollY, viewportHeight) {
     }
 
     results.sort((a, b) => a.y - b.y);
+
     return results;
 
 function buildSimpleSelector(el) {
@@ -566,7 +220,7 @@ function buildSimpleSelector(el) {
 
 // ─── Render with Support for Orphan Interactives ─────────────────────────────
 function renderParagraphs(paragraphs, options = {}) {
-  const { refStart = 1, includeReferences = true } = options;
+  const { refStart = 1 } = options;
   let md = '';
   let refId = refStart;
   const elementMap = {};
@@ -599,7 +253,7 @@ function renderParagraphs(paragraphs, options = {}) {
     // Regular text paragraph with embedded references
     let text = p.text.replace(/\u00A0/g, ' ');
 
-    if (includeReferences && p.interactives.length > 0) {
+    if (p.interactives.length > 0) {
       const replacements = [];
 
       for (const item of p.interactives) {
@@ -662,34 +316,27 @@ function buildElementMapEntry(item, ref) {
 // ─── Main Render Function ────────────────────────────────────────────────────
 async function renderMarkdown(page, options = {}) {
   const {
-    includeReferences = true,
-    refStart = 1,
     scrollY = 0,
     viewportHeight = null,
   } = options;
 
-  const vpH = viewportHeight ?? null;
   const pageMeta = {
     url: await page.url(),
     title: await page.title(),
   };
 
-  const paragraphs = await extractParagraphs(page, scrollY, vpH);
-  const { markdown, elementMap, totalRefs } = renderParagraphs(paragraphs, { refStart, includeReferences });
-
-  const allElements = await extractElements(page).catch(() => []);
-  const semanticModel = buildSemanticModel(allElements, [], pageMeta);
+  const paragraphs = await extractParagraphs(page, scrollY, viewportHeight);
+  const { markdown, elementMap, totalRefs } = renderParagraphs(paragraphs);
 
   return {
     view: markdown,
     elements: elementMap,
     meta: {
-      rows: markdown.split('\n').length, scrollY, viewportHeight: vpH,
+      rows: markdown.split('\n').length, scrollY, viewportHeight: viewportHeight,
       totalRefs, charW: 1, charH: 1,
-      totalElements: allElements.length, interactiveElements: totalRefs,
+      interactiveElements: totalRefs,
       url: pageMeta.url, title: pageMeta.title, renderMs: 0,
-    },
-    semantic: semanticModel
+    }
   };
 }
 

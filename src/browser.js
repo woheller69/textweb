@@ -108,9 +108,6 @@ class AgentBrowser {
     if (!this.page) throw new Error('No page open. Call navigate() first.');
     this.scrollY = await this.page.evaluate(() => window.scrollY);  //sync with browser window
     this.lastResult = await renderMarkdown(this.page, {
-      includeReferences: true,
-      maxDepth: 4,
-      refStart: 1,
       scrollY: this.scrollY,
       viewportHeight: DEFAULT_VIEWPORT.height,
     });
