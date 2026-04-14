@@ -152,7 +152,7 @@ class AgentBrowser {
       // 🔒 Guarantee page exists before locator creation
       if (!this.page) await this.launch();
 
-      const locator = this.page.getByRole(el.semantic, { name: el.text });
+      const locator = this.page.getByRole(el.semantic, { name: el.text }).first();
 
       // ✅ Await each step separately. NO CHAINING.
       await locator.scrollIntoViewIfNeeded({ timeout: 8000 });

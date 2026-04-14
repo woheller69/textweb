@@ -553,7 +553,7 @@ async function renderMarkdown(page, options = {}) {
                 item.tag === 'button' || (item.tag === 'input' && ['submit', 'button'].includes(item.type)) ? 'button' :
                 item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.type :
                 item.tag,
-              href: item.tag === 'A' ? item.href || null : null,
+              href: item.href || null,
               text: truncateText(item.text),
               label: item.text,
               x: item.x, y: item.y, w: item.w, h: item.h,
@@ -598,7 +598,7 @@ async function renderMarkdown(page, options = {}) {
                 item.tag === 'button' || (item.tag === 'input' && ['submit', 'button'].includes(item.type)) ? 'button' :
                 item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.type :
                 item.tag,
-              href: item.tag === 'A' ? item.href || null : null,
+              href: item.href || null,
               text: truncateText(item.text),
               label: item.text,
               x: item.x, y: item.y, w: item.w, h: item.h,
@@ -613,12 +613,15 @@ async function renderMarkdown(page, options = {}) {
               type: item.type || null,
             };
 
-            const safeText = itemText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            // ✅ Fix 1: Escape itemText consistently with paragraph text
+            const escapedItemText = escapeForLLM(itemText);
+            const safeText = escapedItemText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const regex = new RegExp(`(^|\\s|[\\(\\[])(\\b${safeText}\\b)(\\s|[\\.,:;!?\\)\\]]|$)`, 'i');
-            const match = originalText.match(regex); // ✅ Match on ORIGINAL text
+            const match = originalText.match(regex);
 
             if (match) {
-              text = text.replace(regex, `${match[1]}${placeholder}${match[3]}`);
+              // ✅ Fix 2: Keep original matched text and append placeholder
+              text = text.replace(regex, `${match[1]}${match[2]}${placeholder}${match[3]}`);
               replacements.push({ placeholder, originalText: itemText, ref });
             }
           }
