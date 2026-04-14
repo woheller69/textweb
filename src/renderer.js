@@ -628,6 +628,26 @@ async function renderMarkdown(page, options = {}) {
 
           // ✅ Final pass: replace all @@REF_n@@ with [n]
           text = text.replace(/@@REF_(\d+)@@/g, '[$1]');
+
+          // ── Append unmatched form field refs (inputs, buttons, selects) ──
+          if (p.interactives.length > 0) {
+            // Track which refs were already embedded via regex
+            const embeddedRefs = new Set(
+              (text.match(/\[(\d+)\]/g) || []).map(s => parseInt(s.slice(1, -1)))
+            );
+
+            const FORM_TAGS = ['input', 'button', 'select', 'textarea'];
+
+            for (const item of p.interactives) {
+              const ref = Object.entries(elementMap).find(
+                ([, elData]) => elData.selector === item.selector
+              )?.[0];
+
+              if (ref && !embeddedRefs.has(parseInt(ref)) && FORM_TAGS.includes(item.tag)) {
+                text += ` ${item.text}[${ref}] `;
+              }
+            }
+          }
         }
 
 
