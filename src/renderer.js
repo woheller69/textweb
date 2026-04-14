@@ -318,6 +318,7 @@ async function renderMarkdown(page, options = {}) {
   const pageMeta = {
     url: await page.url(),
     title: await page.title(),
+    fullHeight: await page.evaluate("document.documentElement.scrollHeight"),
   };
 
   const paragraphs = await extractParagraphs(page, scrollY, viewportHeight);
@@ -327,10 +328,12 @@ async function renderMarkdown(page, options = {}) {
     view: markdown,
     elements: elementMap,
     meta: {
-      rows: markdown.split('\n').length, scrollY, viewportHeight: viewportHeight,
-      totalRefs, charW: 1, charH: 1,
-      interactiveElements: totalRefs,
-      url: pageMeta.url, title: pageMeta.title, renderMs: 0,
+      scrollY: scrollY,
+      viewportHeight: viewportHeight,
+      fullHeight: pageMeta.fullHeight,
+      totalRefs: totalRefs,
+      url: pageMeta.url,
+      title: pageMeta.title,
     }
   };
 }

@@ -21,7 +21,6 @@ class AgentBrowser {
     this.page = null;
     this.lastResult = null;
     this.headless = false; //open browser window for debugging. Sometimes we need to accept cookies, etc
-    this.charH = 16; // default, updated after first render
     this.defaultTimeout = options.timeout || 10000;
     this.defaultRetries = options.retries ?? 2;
     this.defaultRetryDelayMs = options.retryDelayMs ?? 250;
@@ -111,13 +110,15 @@ class AgentBrowser {
       scrollY: this.scrollY,
       viewportHeight: DEFAULT_VIEWPORT.height,
     });
-    this.lastResult.meta.url = this.page.url();
-    this.lastResult.meta.title = await this.page.title();
-    this.lastResult.meta.full_height = await this.page.evaluate("document.documentElement.scrollHeight");
-    this.lastResult.meta.viewport_height = DEFAULT_VIEWPORT.height;
 
-    // Cache measured charH for scrolling
-    if (this.lastResult.meta.charH) this.charH = this.lastResult.meta.charH;
+    //console.log('\n📊 Meta Summary:\n');
+    //console.log(`  URL: ${this.lastResult.meta.url}`);
+    //console.log(`  Title: ${this.lastResult.meta.title}`);
+    //console.log(`  Scroll Y: ${this.lastResult.meta.scrollY}px`);
+    //console.log(`  Viewport Height: ${this.lastResult.meta.viewportHeight}px`);
+    //console.log(`  Full Height: ${this.lastResult.meta.fullHeight}px`);
+    //console.log(`  Total References: ${this.lastResult.meta.totalRefs}`);
+
     return this.lastResult;
   }
 

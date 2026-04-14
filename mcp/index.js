@@ -400,7 +400,7 @@ function formatResult(result) {
     .map(([ref, el]) => `[${ref}] ${el.semantic}: ${el.text || '(no text)'}: ${el.href || "no link"}`)
     .join('\n');
 
-  return `URL: ${result.meta?.url || 'unknown'}\nVisible range (px): ${result.meta?.scrollY ?? 'unknown'} to ${result.meta?.scrollY+result.meta?.viewport_height || 'unknown'} of ${result.meta?.full_height || 'unknown'}\nTitle: ${result.meta?.title || 'unknown'}\nRefs: ${result.meta?.totalRefs || 0}\n\n${result.view}\n\nInteractive elements:\n${refs}`;
+  return `URL: ${result.meta?.url || 'unknown'}\nVisible range (px): ${result.meta?.scrollY ?? 'unknown'} to ${result.meta?.scrollY+result.meta?.viewportHeight || 'unknown'} of ${result.meta?.fullHeight || 'unknown'}\nTitle: ${result.meta?.title || 'unknown'}\nRefs: ${result.meta?.totalRefs || 0}\n\n${result.view}\n\nInteractive elements:\n${refs}`;
 }
 
 function retryOptions(args = {}) {
