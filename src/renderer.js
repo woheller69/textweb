@@ -399,8 +399,9 @@ async function renderMarkdown(page, options = {}) {
       const results = [];
       const usedInteractives = new Set();
 
-      // Containers
-      const allContainers = Array.from(document.querySelectorAll('p, li, td, th, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, article'));
+      // ❌ DO NOT include td, th in containers — tables are parsed separately
+      const allContainers = Array.from(document.querySelectorAll('p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, article'));
+
       const filteredContainers = allContainers.filter(c =>
         !allContainers.some(o => o !== c && o.contains(c))
       );
@@ -470,17 +471,29 @@ async function renderMarkdown(page, options = {}) {
         }
       }
 
-      // Deduplicate
+      // Deduplicate, but preserve all tables
       const unique = [];
       for (const item of results) {
+        // Always include tables — never deduplicate them
+        if (item.type === 'table') {
+          unique.push(item);
+          continue;
+        }
+
         const isDuplicate = unique.some(u => {
+          // Skip comparison with tables
+          if (u.type === 'table') return false;
+
+          // For containers/orphans: same text, vertical proximity, same link
           const sameText = u.text === item.text;
           const closeVertically = Math.abs(u.y - item.y) < 50;
           const sameLink = u.interactives[0]?.href === item.interactives[0]?.href;
           return sameText && closeVertically && sameLink;
         });
+
         if (!isDuplicate) unique.push(item);
       }
+
 
       // Final render inside browser
       let markdown = '';
@@ -564,55 +577,55 @@ async function renderMarkdown(page, options = {}) {
           continue;
         }
 
-// ── Standard paragraph with embedded references ────────────────────────
-let text = escapeForLLM(p.text || '');
-if (!text) continue;
+        // ── Standard paragraph with embedded references ────────────────────────
+        let text = escapeForLLM(p.text || '');
+        if (!text) continue;
 
-if (p.interactives.length > 0) {
-  const replacements = [];
-  const originalText = text;
+        if (p.interactives.length > 0) {
+          const replacements = [];
+          const originalText = text;
 
-  for (const item of p.interactives) {
-    const itemText = item.text.trim();
-    if (!itemText) continue;
+          for (const item of p.interactives) {
+            const itemText = item.text.trim();
+            if (!itemText) continue;
 
-    const ref = refId++;
-    const placeholder = `@@REF_${ref}@@`;
-    elementMap[ref] = {
-      selector: item.selector,
-      tag: item.tag,
-      semantic: item.tag === 'a' ? 'link' :
-        item.tag === 'button' || (item.tag === 'input' && ['submit', 'button'].includes(item.type)) ? 'button' :
-        item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.type :
-        item.tag,
-      href: item.tag === 'A' ? item.href || null : null,
-      text: truncateText(item.text),
-      label: item.text,
-      x: item.x, y: item.y, w: item.w, h: item.h,
-      action: getAction(item.tag === 'a' ? 'link' : item.tag),
-      disabled: !!item.disabled,
-      checked: item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.checked || null : null,
-      selected: item.tag === 'select' ? item.selected || null : null,
-      required: !!item.required,
-      value: item.value || null,
-      placeholder: item.placeholder || null,
-      name: item.name || null,
-      type: item.type || null,
-    };
+            const ref = refId++;
+            const placeholder = `@@REF_${ref}@@`;
+            elementMap[ref] = {
+              selector: item.selector,
+              tag: item.tag,
+              semantic: item.tag === 'a' ? 'link' :
+                item.tag === 'button' || (item.tag === 'input' && ['submit', 'button'].includes(item.type)) ? 'button' :
+                item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.type :
+                item.tag,
+              href: item.tag === 'A' ? item.href || null : null,
+              text: truncateText(item.text),
+              label: item.text,
+              x: item.x, y: item.y, w: item.w, h: item.h,
+              action: getAction(item.tag === 'a' ? 'link' : item.tag),
+              disabled: !!item.disabled,
+              checked: item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.checked || null : null,
+              selected: item.tag === 'select' ? item.selected || null : null,
+              required: !!item.required,
+              value: item.value || null,
+              placeholder: item.placeholder || null,
+              name: item.name || null,
+              type: item.type || null,
+            };
 
-    const safeText = itemText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(^|\\s|[\\(\\[])(\\b${safeText}\\b)(\\s|[\\.,:;!?\\)\\]]|$)`, 'i');
-    const match = originalText.match(regex); // ✅ Match on ORIGINAL text
+            const safeText = itemText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`(^|\\s|[\\(\\[])(\\b${safeText}\\b)(\\s|[\\.,:;!?\\)\\]]|$)`, 'i');
+            const match = originalText.match(regex); // ✅ Match on ORIGINAL text
 
-    if (match) {
-      text = text.replace(regex, `${match[1]}${placeholder}${match[3]}`);
-      replacements.push({ placeholder, originalText: itemText, ref });
-    }
-  }
+            if (match) {
+              text = text.replace(regex, `${match[1]}${placeholder}${match[3]}`);
+              replacements.push({ placeholder, originalText: itemText, ref });
+            }
+          }
 
-  // ✅ Final pass: replace all @@REF_n@@ with [n]
-  text = text.replace(/@@REF_(\d+)@@/g, '[$1]');
-}
+          // ✅ Final pass: replace all @@REF_n@@ with [n]
+          text = text.replace(/@@REF_(\d+)@@/g, '[$1]');
+        }
 
 
         const cleaned = text.replace(/\s+/g, ' ').trim();
