@@ -12,14 +12,6 @@
 async function renderMarkdown(page, options = {}) {
   const { scrollY = 0, viewportHeight = null } = options;
 
-  // Step 1: Get page metadata *before* extraction (safe in Node)
-  const [url, title, fullHeight] = await Promise.all([
-    page.url(),
-    page.title(),
-    page.evaluate(() => document.documentElement.scrollHeight)
-  ]);
-
-  // Step 2: Do ALL extraction + rendering inside page.evaluate
   const result = await page.evaluate(
     ({ scrollY, viewportHeight }) => {
       // ─── ALL HELPER FUNCTIONS (browser context) ─────────────────────────────
@@ -68,6 +60,36 @@ async function renderMarkdown(page, options = {}) {
           el.getAttribute('role') === 'link' ||
           (el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1')
         );
+      }
+
+      /**
+       * Create a standardized elementMap entry for an interactive item
+       */
+      function createElementMapEntry(ref, item) {
+        const tag = item.tag;
+        const type = item.type;
+
+        return {
+          selector: item.selector,
+          tag: tag,
+          semantic: tag === 'a' ? 'link' :
+            tag === 'button' || (tag === 'input' && ['submit', 'button'].includes(type)) ? 'button' :
+            tag === 'input' && ['checkbox', 'radio'].includes(type) ? type :
+            tag,
+          href: item.href || null,
+          text: truncateText(item.text),
+          label: item.text,
+          x: item.x, y: item.y, w: item.w, h: item.h,
+          action: getAction(tag === 'a' ? 'link' : tag),
+          disabled: !!item.disabled,
+          checked: tag === 'input' && ['checkbox', 'radio'].includes(type) ? item.checked || null : null,
+          selected: tag === 'select' ? item.selected || null : null,
+          required: !!item.required,
+          value: item.value || null,
+          placeholder: item.placeholder || null,
+          name: item.name || null,
+          type: type || null,
+        };
       }
 
       /**
@@ -440,12 +462,12 @@ async function renderMarkdown(page, options = {}) {
 
         const tableData = parseTableStructure(table);
 
-        // Embed references inline in table cells (with proper positioning)
+
+        // ✅ Embed references inline in table cells (clean version)
         for (const row of tableData.rows) {
           for (const cell of row) {
             if (cell?.interactives?.length > 0) {
               let cellText = cell.text;
-              const replacements = [];
 
               for (const rawEl of cell.interactives) {
                 // 🔍 Find the matching processed item from allInteractives
@@ -455,50 +477,25 @@ async function renderMarkdown(page, options = {}) {
                 const ref = refId++;
                 const placeholder = `@@REF_${ref}@@`;
 
-                elementMap[ref] = {
-                  selector: item.selector,
-                  tag: item.tag,
-                  semantic: item.tag === 'a' ? 'link' :
-                    item.tag === 'button' || (item.tag === 'input' && ['submit', 'button'].includes(item.type)) ? 'button' :
-                    item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.type :
-                    item.tag,
-                  href: item.href || null,
-                  text: truncateText(item.text),
-                  label: item.text,
-                  x: item.x, y: item.y, w: item.w, h: item.h,
-                  action: getAction(item.tag === 'a' ? 'link' : item.tag),
-                  disabled: !!item.disabled,
-                  checked: item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.checked || null : null,
-                  selected: item.tag === 'select' ? item.selected || null : null,
-                  required: !!item.required,
-                  value: item.value || null,
-                  placeholder: item.placeholder || null,
-                  name: item.name || null,
-                  type: item.type || null,
-                };
+                elementMap[ref] = createElementMapEntry(ref, item);
 
                 // 🔍 Find the interactive's text within the cell and replace with placeholder
                 const escapedItemText = item.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                 // Match with word boundaries + common delimiters (same as paragraph logic)
-                const regex = new RegExp(`(^|\\s|[\\(\\[])(\\b${escapedItemText}\\b)(\\s|[\\.,:;!?\\)\\]]|$)`, 'i');
+                const regex = new RegExp(`(^|\\s|[(\\[])(\\b${escapedItemText}\\b)(\\s|[.:;!?)\\]]|$)`, 'i');
                 const match = cellText.match(regex);
 
                 if (match) {
                   // Replace with placeholder, preserving surrounding context
                   cellText = cellText.replace(regex, `${match[1]}${match[2]}${placeholder}${match[3]}`);
-                  replacements.push({ placeholder, ref });
                 } else {
                   // Fallback: append if we can't find exact position (should be rare)
                   cellText = `${cellText}[${ref}]`;
                 }
               }
 
-              // ✅ Final pass: replace all @@REF_n@@ placeholders with [n]
-              for (const { placeholder, ref } of replacements) {
-                cellText = cellText.replace(placeholder, `[${ref}]`);
-              }
-
-              cell.text = cellText;
+              // ✅ Single global replace: @@REF_123@@ → [123]
+              cell.text = cellText.replace(/@@REF_(\d+)@@/g, '[$1]');
             }
           }
         }
@@ -586,27 +583,7 @@ async function renderMarkdown(page, options = {}) {
             if (!item.text?.trim()) continue;
 
             const ref = refId++;
-            elementMap[ref] = {
-              selector: item.selector,
-              tag: item.tag,
-              semantic: item.tag === 'a' ? 'link' :
-                item.tag === 'button' || (item.tag === 'input' && ['submit', 'button'].includes(item.type)) ? 'button' :
-                item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.type :
-                item.tag,
-              href: item.href || null,
-              text: truncateText(item.text),
-              label: item.text,
-              x: item.x, y: item.y, w: item.w, h: item.h,
-              action: getAction(item.tag === 'a' ? 'link' : item.tag),
-              disabled: !!item.disabled,
-              checked: item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.checked || null : null,
-              selected: item.tag === 'select' ? item.selected || null : null,
-              required: !!item.required,
-              value: item.value || null,
-              placeholder: item.placeholder || null,
-              name: item.name || null,
-              type: item.type || null,
-            };
+            elementMap[ref] = createElementMapEntry(ref, item);
 
             let display = `${item.text}[${ref}]`;
             if (item.tag === 'input' && (item.type === 'submit' || item.type === 'button')) {
@@ -622,7 +599,6 @@ async function renderMarkdown(page, options = {}) {
         if (!text) continue;
 
         if (p.interactives.length > 0) {
-          const replacements = [];
           const originalText = text;
 
           for (const item of p.interactives) {
@@ -631,38 +607,17 @@ async function renderMarkdown(page, options = {}) {
 
             const ref = refId++;
             const placeholder = `@@REF_${ref}@@`;
-            elementMap[ref] = {
-              selector: item.selector,
-              tag: item.tag,
-              semantic: item.tag === 'a' ? 'link' :
-                item.tag === 'button' || (item.tag === 'input' && ['submit', 'button'].includes(item.type)) ? 'button' :
-                item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.type :
-                item.tag,
-              href: item.href || null,
-              text: truncateText(item.text),
-              label: item.text,
-              x: item.x, y: item.y, w: item.w, h: item.h,
-              action: getAction(item.tag === 'a' ? 'link' : item.tag),
-              disabled: !!item.disabled,
-              checked: item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.checked || null : null,
-              selected: item.tag === 'select' ? item.selected || null : null,
-              required: !!item.required,
-              value: item.value || null,
-              placeholder: item.placeholder || null,
-              name: item.name || null,
-              type: item.type || null,
-            };
+            elementMap[ref] = createElementMapEntry(ref, item);
 
             // ✅ Fix 1: Escape itemText consistently with paragraph text
             const escapedItemText = escapeForLLM(itemText);
             const safeText = escapedItemText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(`(^|\\s|[\\(\\[])(\\b${safeText}\\b)(\\s|[\\.,:;!?\\)\\]]|$)`, 'i');
+            const regex = new RegExp(`(^|\\s|[(\\[])(\\b${safeText}\\b)(\\s|[.:;!?)\\]]|$)`, 'i');
             const match = originalText.match(regex);
 
             if (match) {
               // ✅ Fix 2: Keep original matched text and append placeholder
               text = text.replace(regex, `${match[1]}${match[2]}${placeholder}${match[3]}`);
-              replacements.push({ placeholder, originalText: itemText, ref });
             }
           }
 
@@ -690,7 +645,6 @@ async function renderMarkdown(page, options = {}) {
           }
         }
 
-
         const cleaned = text.replace(/\s+/g, ' ').trim();
         if (cleaned) markdown += cleaned + '\n\n';
       }
@@ -711,7 +665,6 @@ async function renderMarkdown(page, options = {}) {
     { scrollY, viewportHeight }
   );
 
-  // Step 3: Merge metadata with Node values (for reliability)
   return result;
 }
 
