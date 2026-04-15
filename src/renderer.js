@@ -341,6 +341,51 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
+       * Embed an interactive reference into target text using @@REF_n@@ placeholder.
+       * Performs regex matching with word boundaries + delimiters, then replaces match.
+       * @param {string} targetText - The text to search/modify
+       * @param {Object} item - The interactive item with .text property
+       * @param {Object} elementMap - The map to register the ref entry
+       * @param {number} refId - Current ref counter
+       * @param {Object} options - { fallbackAppend?: boolean }
+       * @returns {{ text: string, refId: number, ref: number, matched: boolean }}
+       *          Updated text, new refId, assigned ref, and whether regex matched
+       */
+      function embedInteractiveRef(targetText, item, elementMap, refId, { fallbackAppend = false } = {}) {
+        if (!item || !item.text?.trim()) {
+          return { text: targetText, refId, ref: null, matched: false };
+        }
+
+        const itemText = item.text.trim();
+        const ref = refId++;
+        const placeholder = `@@REF_${ref}@@`;
+
+        elementMap[ref] = createElementMapEntry(ref, item);
+
+        // Escape for LLM + regex safety
+        const escapedItemText = escapeForLLM(itemText);
+        const safeText = escapedItemText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+        // Boundary-aware regex (matches word + common delimiters)
+        const regex = new RegExp(`(^|\\s|[(\\[])(\\b${safeText}\\b)(\\s|[.:;!?)\\]]|$)`, 'i');
+        const match = targetText.match(regex);
+
+        if (match) {
+          // Preserve surrounding context while injecting placeholder
+          targetText = targetText.replace(regex, `${match[1]}${match[2]}${placeholder}${match[3]}`);
+          return { text: targetText, refId, ref, matched: true };
+        }
+
+        // No match found
+        if (fallbackAppend) {
+          // Append reference at end as fallback
+          targetText = `${targetText}[${ref}]`;
+        }
+
+        return { text: targetText, refId, ref, matched: false };
+      }
+
+      /**
        * Truncate text for metadata
        */
       function truncateText(text, maxLen = 80) {
@@ -467,35 +512,14 @@ async function renderMarkdown(page, options = {}) {
         for (const row of tableData.rows) {
           for (const cell of row) {
             if (cell?.interactives?.length > 0) {
-              let cellText = cell.text;
+              let text = cell.text;
 
               for (const rawEl of cell.interactives) {
-                // 🔍 Find the matching processed item from allInteractives
                 const item = allInteractives.find(i => i.el === rawEl);
-                if (!item || !item.text?.trim()) continue;
-
-                const ref = refId++;
-                const placeholder = `@@REF_${ref}@@`;
-
-                elementMap[ref] = createElementMapEntry(ref, item);
-
-                // 🔍 Find the interactive's text within the cell and replace with placeholder
-                const escapedItemText = item.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                // Match with word boundaries + common delimiters (same as paragraph logic)
-                const regex = new RegExp(`(^|\\s|[(\\[])(\\b${escapedItemText}\\b)(\\s|[.:;!?)\\]]|$)`, 'i');
-                const match = cellText.match(regex);
-
-                if (match) {
-                  // Replace with placeholder, preserving surrounding context
-                  cellText = cellText.replace(regex, `${match[1]}${match[2]}${placeholder}${match[3]}`);
-                } else {
-                  // Fallback: append if we can't find exact position (should be rare)
-                  cellText = `${cellText}[${ref}]`;
-                }
+                ({ text, refId } = embedInteractiveRef(text, item, elementMap, refId, {fallbackAppend: true}));
               }
-
-              // ✅ Single global replace: @@REF_123@@ → [123]
-              cell.text = cellText.replace(/@@REF_(\d+)@@/g, '[$1]');
+              // Final global replace:
+              cell.text = text.replace(/@@REF_(\d+)@@/g, '[$1]');
             }
           }
         }
@@ -599,29 +623,11 @@ async function renderMarkdown(page, options = {}) {
         if (!text) continue;
 
         if (p.interactives.length > 0) {
-          const originalText = text;
 
           for (const item of p.interactives) {
-            const itemText = item.text.trim();
-            if (!itemText) continue;
-
-            const ref = refId++;
-            const placeholder = `@@REF_${ref}@@`;
-            elementMap[ref] = createElementMapEntry(ref, item);
-
-            // ✅ Fix 1: Escape itemText consistently with paragraph text
-            const escapedItemText = escapeForLLM(itemText);
-            const safeText = escapedItemText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(`(^|\\s|[(\\[])(\\b${safeText}\\b)(\\s|[.:;!?)\\]]|$)`, 'i');
-            const match = originalText.match(regex);
-
-            if (match) {
-              // ✅ Fix 2: Keep original matched text and append placeholder
-              text = text.replace(regex, `${match[1]}${match[2]}${placeholder}${match[3]}`);
-            }
+            ({ text, refId } = embedInteractiveRef(text, item, elementMap, refId));
           }
-
-          // ✅ Final pass: replace all @@REF_n@@ with [n]
+          // Final global replace:
           text = text.replace(/@@REF_(\d+)@@/g, '[$1]');
 
           // ── Append unmatched form field refs (inputs, buttons, selects) ──
