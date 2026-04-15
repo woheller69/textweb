@@ -533,7 +533,7 @@ async function renderMarkdown(page, options = {}) {
               name: item.name || null,
               type: item.type || null,
             };
-            markdown += `\n[${ref}] ${item.text}`;
+            markdown += `\n${item.text}[${ref}]`;
           }
           if (p.caption) markdown += `\n\n*Caption: ${escapeForLLM(p.caption)}*`;
           markdown += '\n\n';
@@ -568,9 +568,9 @@ async function renderMarkdown(page, options = {}) {
               type: item.type || null,
             };
 
-            let display = `[${ref}] ${item.text}`;
+            let display = `${item.text}[${ref}]`;
             if (item.tag === 'input' && (item.type === 'submit' || item.type === 'button')) {
-              display = `[${ref}] [${item.text}]`;
+              display = `[${item.text}][${ref}]`;
             }
             markdown += `${display}\n\n`;
           }
@@ -672,18 +672,7 @@ async function renderMarkdown(page, options = {}) {
   );
 
   // Step 3: Merge metadata with Node values (for reliability)
-  return {
-    view: result.view,
-    elements: result.elements,
-    meta: {
-      scrollY: result.meta.scrollY,
-      viewportHeight: result.meta.viewportHeight,
-      fullHeight: fullHeight, // use Node value (more reliable)
-      totalRefs: result.meta.totalRefs,
-      url: url,
-      title: title
-    }
-  };
+  return result;
 }
 
 // Export
