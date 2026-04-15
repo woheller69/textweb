@@ -468,8 +468,9 @@ async function renderMarkdown(page, options = {}) {
       const usedInteractives = new Set();
 
       // ❌ DO NOT include td, th in containers — tables are parsed separately
-      const allContainers = Array.from(document.querySelectorAll('p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, article'));
-
+      const allContainers = Array.from(document.querySelectorAll('p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, article'))
+        .filter(el => !el.closest('table'));  // ← NEW: Exclude elements inside tables
+      
       const filteredContainers = allContainers.filter(c =>
         !allContainers.some(o => o !== c && o.contains(c))
       );
