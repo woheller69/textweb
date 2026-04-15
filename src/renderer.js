@@ -328,6 +328,15 @@ async function renderMarkdown(page, options = {}) {
         return `\n\n${hRow}\n${sepRow}\n${bodyRows.join('\n')}\n`;
       }
 
+       /**
+       * Compress markdown text for LLM
+       */
+      function compressForLLM(markdown) {
+        return markdown
+          .replace(/[ \t]{2,}/g, ' ')      // Collapse multiple spaces/tabs
+          .replace(/-{3,}/g, '---');       // Compress any sequence of 3+ dashes to exactly 3
+      }
+
       /**
        * Escape text for Markdown + LLM
        */
@@ -502,6 +511,12 @@ async function renderMarkdown(page, options = {}) {
       // Tables
       const allTables = Array.from(document.querySelectorAll('table'));
       for (const table of allTables) {
+        // Do not render layout tables like on Hacker News
+        if (table.getAttribute('border') === '0' &&
+            table.getAttribute('cellpadding') === '0' &&
+            table.getAttribute('cellspacing') === '0') {
+          continue;
+        }
         if (!hasPointerEvents(table)) continue;
         const top = table.getBoundingClientRect().top + window.scrollY;
         if (viewportHeight !== null && (top < scrollY || top > scrollY + viewportHeight)) continue;
@@ -657,7 +672,7 @@ async function renderMarkdown(page, options = {}) {
       }
 
       return {
-        view: markdown.trim(),
+        view: compressForLLM(markdown.trim()),
         elements: elementMap,
         meta: {
           scrollY,
