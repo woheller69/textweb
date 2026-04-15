@@ -5,7 +5,6 @@
  */
 
 const { AgentBrowser } = require('./browser');
-const { createServer } = require('./server');
 const { ensureBrowser } = require('./ensure-browser');
 const readline = require('readline');
 
@@ -15,11 +14,6 @@ function parseArgs() {
   const options = {
     url: null,
     interactive: false,
-    json: false,
-    output: 'grid',
-    serve: false,
-    cols: 100,
-    port: 3000,
     help: false
   };
 
@@ -31,48 +25,7 @@ function parseArgs() {
       case '-i':
         options.interactive = true;
         break;
-        
-      case '--json':
-      case '-j':
-        options.json = true;
-        options.output = 'json';
-        break;
 
-      case '--output':
-      case '-o': {
-        const value = (args[++i] || '').toLowerCase();
-        if (['grid', 'semantic', 'hybrid', 'json'].includes(value)) {
-          options.output = value;
-          options.json = value === 'json';
-        } else {
-          options.help = true;
-          options.error = `Invalid --output value "${value}". Expected one of: grid, semantic, hybrid, json`;
-        }
-        break;
-      }
-        
-      case '--serve':
-      case '-s':
-        options.serve = true;
-        break;
-        
-      case '--cols':
-      case '-c':
-        options.cols = parseInt(args[++i]) || 100;
-        break;
-        
-      case '--rows':
-      case '-r':
-        // Deprecated: height is dynamic (grows to fit content). Ignored.
-        console.error('Warning: --rows is deprecated. Height is dynamic (grows to fit content).');
-        args[++i]; // consume the value
-        break;
-        
-      case '--port':
-      case '-p':
-        options.port = parseInt(args[++i]) || 3000;
-        break;
-        
       case '--help':
       case '-h':
         options.help = true;
@@ -97,27 +50,14 @@ TextWeb - Text-grid web renderer for AI agents
 USAGE:
   textweb <url>                    Render page and print to console
   textweb --interactive <url>      Start interactive REPL mode
-  textweb --json <url>             Output as JSON (legacy: view + elements + meta)
-  textweb --output <mode> <url>    Choose output mode (grid|semantic|hybrid|json)
-  textweb --serve                  Start HTTP API server
 
 OPTIONS:
-  --cols, -c <number>                Grid width in characters (default: 100)
-  --rows, -r <number>                (deprecated, height is dynamic)
-  --port, -p <number>                Server port (default: 3000)
   --interactive, -i                  Interactive REPL mode
-  --json, -j                         JSON output format
-  --output, -o <mode>                Output mode: grid, semantic, hybrid, json
-  --serve, -s                        Start HTTP server
   --help, -h                         Show this help message
 
 EXAMPLES:
   textweb https://example.com
   textweb --interactive https://github.com
-  textweb --output semantic https://news.ycombinator.com
-  textweb --output hybrid --cols 120 https://news.ycombinator.com
-  textweb --json --cols 120 https://news.ycombinator.com
-  textweb --serve --port 8080
 
 INTERACTIVE COMMANDS:
   click <ref>                        Click element by reference number
@@ -146,38 +86,17 @@ async function render(url, options) {
     console.error(`Rendering: ${url}`);
     const result = await browser.navigate(url);
 
-    if (options.output === 'semantic') {
-      console.log(JSON.stringify(result.semantic || {
-        mode: 'semantic',
-        url: result.meta?.url || null,
-        title: result.meta?.title || null,
-        elements: [],
-      }, null, 2));
-    } else if (options.output === 'hybrid') {
-      console.log(JSON.stringify({
-        mode: 'hybrid',
-        view: result.view,
-        semantic: result.semantic || { mode: 'semantic', elements: [] },
-        meta: result.meta,
-      }, null, 2));
-    } else if (options.json || options.output === 'json') {
-      console.log(JSON.stringify({
-        view: result.view,
-        elements: result.elements,
-        meta: result.meta
-      }, null, 2));
-    } else {
-      console.log(result.view);
+    console.log(result.view);
       
-      // Show element references
-      const elCount = Object.keys(result.elements || {}).length;
-      if (elCount > 0) {
-        console.error(`\\nInteractive elements:`);
-        for (const [ref, element] of Object.entries(result.elements || {})) {
-          console.error(`[${ref}] ${element.semantic || element.tag}: ${element.text || '(no text)'}`);
-        }
+    // Show element references
+    const elCount = Object.keys(result.elements || {}).length;
+    if (elCount > 0) {
+      console.error(`\\nInteractive elements:`);
+      for (const [ref, element] of Object.entries(result.elements || {})) {
+        console.error(`[${ref}] ${element.semantic || element.tag}: ${element.text || '(no text)'}`);
       }
     }
+
     
   } catch (error) {
     console.error(`Error: ${error.message}`);
@@ -396,29 +315,6 @@ Interactive Commands:
   }
 }
 
-// Start HTTP server
-async function serve(options) {
-  console.log(`Starting TextWeb HTTP server on port ${options.port}...`);
-  
-  const server = createServer({
-    cols: options.cols,
-
-  });
-  
-  server.listen(options.port, () => {
-    console.log(`TextWeb server running at http://localhost:${options.port}`);
-    console.log(`\\nAPI Endpoints:`);
-    console.log(`  POST /navigate   - Navigate to URL`);
-    console.log(`  POST /click      - Click element`);
-    console.log(`  POST /type       - Type text`);
-    console.log(`  POST /scroll     - Scroll page`);
-    console.log(`  POST /select     - Select dropdown option`);
-    console.log(`  POST /integrations/:action - Runtime integration hook actions`);
-    console.log(`  GET  /snapshot   - Get current state`);
-    console.log(`  GET  /health     - Health check`);
-  });
-}
-
 // Main entry point
 async function main() {
   const options = parseArgs();
@@ -435,14 +331,11 @@ async function main() {
 
   await ensureBrowser();
 
-  if (options.serve) {
-    await serve(options);
-  } else if (options.interactive) {
+  if (options.interactive) {
     await interactive(options.url, options);
   } else if (options.url) {
     await render(options.url, options);
   } else {
-    console.error('Error: No URL provided or server mode selected');
     console.error('Use --help for usage information');
     process.exit(1);
   }
@@ -466,5 +359,3 @@ if (require.main === module) {
     process.exit(1);
   });
 }
-
-module.exports = { parseArgs, render, interactive, serve };

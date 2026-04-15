@@ -4,22 +4,15 @@
 
 Instead of taking expensive screenshots and piping them through vision models, TextWeb renders web pages as markdown that LLMs can reason about natively. Full JavaScript execution, spatial layout preserved, interactive elements annotated.
 
-📄 [Documentation](https://chrisrobison.github.io/textweb) · 📦 [npm](https://www.npmjs.com/package/textweb) · 🐙 [GitHub](https://github.com/chrisrobison/textweb)
-
-## Why?
-
-| Approach | Size | Requires | Speed | Spatial Layout |
-|----------|------|----------|-------|----------------|
-| Screenshot + Vision | ~1MB | Vision model ($$$) | Slow | Pixel-level |
-| Accessibility Tree | ~5KB | Nothing | Fast | ❌ Lost |
-| Raw HTML | ~100KB+ | Nothing | Fast | ❌ Lost |
-| **TextWeb** | **~2-5KB** | **Nothing** | **Fast** | **✅ Preserved** |
 
 ## Quick Start
 
 ```bash
-npm install playwright-extra puppeteer-extra-plugin-stealth
+npm install @playwright/test
+npm install playwright-extra puppeteer-extra-plugin-stealth cheerio
 npx playwright install chromium
+In case of missing dependencies (requires root): npx playwright install --with-deps chromium)
+
 git clone https://github.com/woheller69/textweb.git
 cd textweb/src
 
@@ -38,20 +31,9 @@ node cli.js https://news.ycombinator.com
 #Or with global installation
 textweb https://news.ycombinator.com
 
-# Explicitly request grid mode (same as default)
-node cli.js --output grid https://news.ycombinator.com
-
-# Semantic JSON output for agent workflows
-node cli.js --output semantic https://example.com
-
-# Hybrid output (grid + semantic metadata)
-node cli.js --output hybrid https://example.com
-
 # Interactive mode
 node cli.js--interactive https://github.com
 
-# Legacy JSON output (backward compatible)
-node cli.js --json https://example.com
 ```
 
 ## Example Output
@@ -69,11 +51,7 @@ node cli.js --json https://example.com
 
 ~500 bytes. An LLM can read this, understand the layout, and say "click ref 9" to open the first link. No vision model needed.
 
-## Integration Options
-
-TextWeb works with any AI agent framework. Pick your integration:
-
-### 🔌 MCP Server (Claude Desktop, Cursor, Windsurf, Cline, OpenClaw)
+## MCP Server
 
 The fastest way to add web browsing to any MCP-compatible client.
 
@@ -94,271 +72,4 @@ node mcp/index.js --host=.... --port=...
 textweb-mcp --host= --port=...
 ```
 
-**Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "textweb": {
-      "command": "textweb-mcp"
-    }
-  }
-}
-```
-
-**Cursor** — add to `.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "textweb": {
-      "command": "textweb-mcp"
-    }
-  }
-}
-```
-
-**OpenClaw** — add to `openclaw.json` skills or MCP config.
-
-Then just ask: *"Go to hacker news and find posts about AI"* — the agent uses markdown text instead of screenshots.
-
-**New (v0.2.1-style MCP capabilities):**
-- `session_id` on every tool call for isolated parallel workflows
-- `textweb_storage_save` / `textweb_storage_load` for persistent auth/session state
-- `textweb_wait_for` for multi-step async UI transitions
-- `textweb_assert_field` for flow guards before submit
-
-### 🛠️ OpenAI / Anthropic Function Calling
-
-Drop-in tool definitions for any function-calling model. See [`tools/tool_definitions.json`](tools/tool_definitions.json).
-
-Pair with the [system prompt](tools/system_prompt.md) to teach the model how to read the grid:
-
-```python
-import json
-
-# Load tool definitions
-with open("tools/tool_definitions.json") as f:
-    textweb_tools = json.load(f)["tools"]
-
-# Load system prompt
-with open("tools/system_prompt.md") as f:
-    system_prompt = f.read()
-
-# Use with OpenAI
-response = openai.chat.completions.create(
-    model="gpt-4",
-    messages=[
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": "Go to example.com and click the first link"},
-    ],
-    tools=textweb_tools,
-)
-```
-
-### 🦜 LangChain
-
-```python
-from tools.langchain import get_textweb_tools
-
-# Start the server first: textweb --serve 3000
-tools = get_textweb_tools(base_url="http://localhost:3000")
-
-# Use with any LangChain agent
-from langchain.agents import initialize_agent
-agent = initialize_agent(tools, llm, agent="zero-shot-react-description")
-agent.run("Find the top story on Hacker News")
-```
-
-### 🚢 CrewAI
-
-```python
-from tools.crewai import TextWebBrowseTool, TextWebClickTool, TextWebTypeTool
-
-# Start the server first: textweb --serve 3000
-researcher = Agent(
-    role="Web Researcher",
-    tools=[TextWebBrowseTool(), TextWebClickTool(), TextWebTypeTool()],
-    llm=llm,
-)
-```
-
-### 🌐 HTTP API
-
-```bash
-# Start the server
-textweb --serve 3000
-
-# Navigate
-curl -X POST http://localhost:3000/navigate \
-  -H 'Content-Type: application/json' \
-  -d '{"url": "https://example.com"}'
-
-# Click, type, scroll
-curl -X POST http://localhost:3000/click -d '{"ref": 3}'
-curl -X POST http://localhost:3000/type -d '{"ref": 7, "text": "hello"}'
-curl -X POST http://localhost:3000/scroll -d '{"direction": "down"}'
-```
-
-### 📦 Node.js Library
-
-```javascript
-const { AgentBrowser } = require('textweb');
-
-const browser = new AgentBrowser({ cols: 120 });
-const { view, elements, semantic, meta } = await browser.navigate('https://example.com');
-
-console.log(view);        // The markdown text
-console.log(elements);    // { 0: { selector, tag, text, href }, ... }
-console.log(semantic);    // { mode, url, title, elements: [...] }
-console.log(meta.stats);  // { totalElements, interactiveElements, renderMs }
-
-await browser.click(3);              // Click element [3]
-await browser.type(7, 'hello');      // Type into element [7]
-await browser.scroll('down');        // Scroll down
-await browser.waitFor({ selector: '.step-2.active' }); // Wait for next step
-await browser.assertField(7, 'hello', { comparator: 'equals' }); // Validate field state
-await browser.saveStorageState('/tmp/textweb-state.json');
-await browser.loadStorageState('/tmp/textweb-state.json');
-await browser.query('nav a');        // Find elements by CSS selector
-await browser.screenshot();          // PNG buffer (for debugging)
-console.log(browser.getCurrentUrl());// Current page URL
-await browser.close();
-```
-
-## Grid Conventions
-
-| Element | Rendering | Interaction |
-|---------|-----------|-------------|
-| Links | `[ref]link text` | `click(ref)` |
-| Buttons | `[ref button text]` | `click(ref)` |
-| Text inputs | `[ref:placeholder____]` | `type(ref, "text")` |
-| Checkboxes | `[ref:X]` / `[ref: ]` | `click(ref)` to toggle |
-| Radio buttons | `[ref:●]` / `[ref:○]` | `click(ref)` |
-| Dropdowns | `[ref:▼ Selected]` | `select(ref, "value")` |
-| File inputs | `[ref:📎 Choose file]` | `upload(ref, "/path")` |
-| Headings | `═══ HEADING ═══` | — |
-| Separators | `────────────────` | — |
-| List items | `• Item text` | — |
-
-## How It Works
-
-```
-┌─────────────────────────────────────────────┐
-│  Your Agent (any LLM)                        │
-│  "click 3" / "type 7 hello" / "scroll down"  │
-├─────────────────────────────────────────────┤
-│  TextWeb                                     │
-│  Pixel positions → character grid            │
-│  Interactive elements get [ref] annotations  │
-├─────────────────────────────────────────────┤
-│  Headless Chromium (Playwright)              │
-│  Full JS/CSS execution                       │
-│  getBoundingClientRect() for all elements    │
-└─────────────────────────────────────────────┘
-```
-
-1. **Real browser** renders the page (full JS, CSS, dynamic content)
-2. **Extract** every visible element's position, size, text, and interactivity
-3. **Map** pixel coordinates to character grid positions (spatial layout preserved)
-4. **Annotate** interactive elements with `[ref]` numbers for agent interaction
-
-## Selector Strategy
-
-TextWeb builds stable CSS selectors for each interactive element, preferring resilient strategies over brittle positional ones:
-
-| Priority | Strategy | Example |
-|----------|----------|---------|
-| 1 | `#id` | `#email` |
-| 2 | `[data-testid]` | `[data-testid="submit-btn"]` |
-| 3 | `[aria-label]` | `input[aria-label="Search"]` |
-| 4 | `[role]` (if unique) | `[role="navigation"]` |
-| 5 | `[name]` | `input[name="email"]` |
-| 6 | `a[href]` (if unique) | `a[href="/about"]` |
-| 7 | `nth-child` (fallback) | `div > a:nth-child(3)` |
-
-This means selectors survive DOM changes between snapshots — critical for multi-step agent workflows.
-
-## ATS Workflow Examples (Greenhouse / Lever)
-
-For multi-step ATS flows, use a stable `session_id` and combine wait/assert guards:
-
-```javascript
-// Keep one session for the whole application
-await textweb_navigate({ url: 'https://job-boards.greenhouse.io/acme/jobs/123', session_id: 'apply-acme' });
-
-// Fill + continue
-await textweb_type({ ref: 12, text: 'Christopher', session_id: 'apply-acme' });
-await textweb_type({ ref: 15, text: 'Robison', session_id: 'apply-acme' });
-await textweb_click({ ref: 42, session_id: 'apply-acme', retries: 3, retry_delay_ms: 400 });
-
-// Guard transition
-await textweb_wait_for({ selector: '#step-2.active', timeout_ms: 8000, session_id: 'apply-acme', retries: 2 });
-
-// Validate before submit
-await textweb_assert_field({ ref: 77, expected: 'San Francisco', comparator: 'includes', session_id: 'apply-acme' });
-
-// Persist auth/session for follow-up flow
-await textweb_storage_save({ path: '/tmp/ats-state.json', session_id: 'apply-acme' });
-```
-
-Useful session tools:
-- `textweb_session_list` → inspect active sessions
-- `textweb_session_close` → close one session or all
-
-## App Runtime Prototype (Manifest + LARC)
-
-This repository now includes an early scaffold for a manifest-driven user runtime shell (separate from low-level raw admin tooling):
-
-- Manifest validator: `src/app-runtime/manifest.js`
-- PAN topic contract: `src/app-runtime/topics.js`
-- Runtime shell + left nav + tabbed content: `canvas/app-runtime/app-shell.html`
-- Sample manifest: `canvas/app-runtime/sample-app.json`
-
-The runtime shell uses [LARC](https://github.com/larcjs/larc) PAN (`@larcjs/core-lite`) for in-page event communication, with a local fallback bus if the module cannot be loaded.
-
-To open the prototype:
-
-```bash
-# Start API server for integration hooks (save manifest/components)
-npm run serve
-
-# In another terminal, open the runtime shell
-open /Users/cdr/Projects/textweb/canvas/app-runtime/app-shell.html
-```
-
-Integration actions implemented on the API server:
-- `POST /integrations/sync_saved_form`
-- `POST /integrations/save_manifest`
-- `POST /integrations/upsert_nav_item`
-- `POST /integrations/runtime_state`
-
-## Testing
-
-```bash
-# Run all tests (form + live + ATS e2e)
-npm test
-
-# Form fixture tests
-npm run test:form
-
-# Live site tests — example.com, HN, Wikipedia
-npm run test:live
-
-# ATS multi-step fixture test
-npm run test:ats
-```
-
-Test fixtures are in `test/fixtures/` — includes a comprehensive HTML form and an ATS-style multi-step application fixture.
-
-## Design Principles
-
-1. **Text is native to LLMs** — no vision model middleman
-2. **Spatial layout matters** — flat element lists lose the "where"
-3. **Cheap and fast** — 2-5KB per render vs 1MB+ screenshots
-4. **Full web support** — real Chromium runs the JS
-5. **Interactive** — reference numbers map to real DOM elements
-
-## License
-
-MIT © [Christopher Robison](https://cdr2.com)
+### MCP Tools

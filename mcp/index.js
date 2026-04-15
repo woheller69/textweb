@@ -4,7 +4,6 @@
  * TextWeb MCP Server
  *
  * Model Context Protocol server that gives any MCP client
- * (Claude Desktop, Cursor, Windsurf, Cline, OpenClaw, etc.)
  * text-based web browsing capabilities.
  *
  * Communicates over stdio using JSON-RPC 2.0 or streamable http
@@ -17,7 +16,7 @@ const cheerio = require('cheerio');
 
 const SERVER_INFO = {
   name: 'textweb',
-  version: '0.2.2',
+  version: '0.5.0',
 };
 
 const SESSION_NOTE = 'Optional session_id to isolate state across flows. Defaults to "default".';
