@@ -348,7 +348,8 @@ async function renderMarkdown(page, options = {}) {
       }
 
       // ─── MAIN EXTRACT + RENDER LOGIC ──────────────────────────────────────────
-
+      let refId = 1;
+      const elementMap = {};
       // 1. Collect interactives
       const allInteractives = [];
       document.querySelectorAll(
@@ -438,6 +439,70 @@ async function renderMarkdown(page, options = {}) {
         if (viewportHeight !== null && (top < scrollY || top > scrollY + viewportHeight)) continue;
 
         const tableData = parseTableStructure(table);
+
+        // Embed references inline in table cells (with proper positioning)
+        for (const row of tableData.rows) {
+          for (const cell of row) {
+            if (cell?.interactives?.length > 0) {
+              let cellText = cell.text;
+              const replacements = [];
+
+              for (const rawEl of cell.interactives) {
+                // 🔍 Find the matching processed item from allInteractives
+                const item = allInteractives.find(i => i.el === rawEl);
+                if (!item || !item.text?.trim()) continue;
+
+                const ref = refId++;
+                const placeholder = `@@REF_${ref}@@`;
+
+                elementMap[ref] = {
+                  selector: item.selector,
+                  tag: item.tag,
+                  semantic: item.tag === 'a' ? 'link' :
+                    item.tag === 'button' || (item.tag === 'input' && ['submit', 'button'].includes(item.type)) ? 'button' :
+                    item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.type :
+                    item.tag,
+                  href: item.href || null,
+                  text: truncateText(item.text),
+                  label: item.text,
+                  x: item.x, y: item.y, w: item.w, h: item.h,
+                  action: getAction(item.tag === 'a' ? 'link' : item.tag),
+                  disabled: !!item.disabled,
+                  checked: item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.checked || null : null,
+                  selected: item.tag === 'select' ? item.selected || null : null,
+                  required: !!item.required,
+                  value: item.value || null,
+                  placeholder: item.placeholder || null,
+                  name: item.name || null,
+                  type: item.type || null,
+                };
+
+                // 🔍 Find the interactive's text within the cell and replace with placeholder
+                const escapedItemText = item.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                // Match with word boundaries + common delimiters (same as paragraph logic)
+                const regex = new RegExp(`(^|\\s|[\\(\\[])(\\b${escapedItemText}\\b)(\\s|[\\.,:;!?\\)\\]]|$)`, 'i');
+                const match = cellText.match(regex);
+
+                if (match) {
+                  // Replace with placeholder, preserving surrounding context
+                  cellText = cellText.replace(regex, `${match[1]}${match[2]}${placeholder}${match[3]}`);
+                  replacements.push({ placeholder, ref });
+                } else {
+                  // Fallback: append if we can't find exact position (should be rare)
+                  cellText = `${cellText}[${ref}]`;
+                }
+              }
+
+              // ✅ Final pass: replace all @@REF_n@@ placeholders with [n]
+              for (const { placeholder, ref } of replacements) {
+                cellText = cellText.replace(placeholder, `[${ref}]`);
+              }
+
+              cell.text = cellText;
+            }
+          }
+        }
+
         const tableInteractives = allInteractives.filter(item =>
           table.contains(item.el) && !usedInteractives.has(item.el)
         );
@@ -497,8 +562,8 @@ async function renderMarkdown(page, options = {}) {
 
       // Final render inside browser
       let markdown = '';
-      let refId = 1;
-      const elementMap = {};
+
+
 
       for (const p of unique.sort((a, b) => a.y - b.y)) {
         if (p.isHeading && p.text) {
@@ -509,32 +574,7 @@ async function renderMarkdown(page, options = {}) {
 
         if (p.type === 'table') {
           markdown += renderTable(p.data);
-          for (const item of p.interactives) {
-            if (!item.text?.trim()) continue;
-            const ref = refId++;
-            elementMap[ref] = {
-              selector: item.selector,
-              tag: item.tag,
-              semantic: item.tag === 'a' ? 'link' :
-                item.tag === 'button' || (item.tag === 'input' && ['submit', 'button'].includes(item.type)) ? 'button' :
-                item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.type :
-                item.tag,
-              href: item.href || null,
-              text: truncateText(item.text),
-              label: item.text,
-              x: item.x, y: item.y, w: item.w, h: item.h,
-              action: getAction(item.tag === 'a' ? 'link' : item.tag),
-              disabled: !!item.disabled,
-              checked: item.tag === 'input' && ['checkbox', 'radio'].includes(item.type) ? item.checked || null : null,
-              selected: item.tag === 'select' ? item.selected || null : null,
-              required: !!item.required,
-              value: item.value || null,
-              placeholder: item.placeholder || null,
-              name: item.name || null,
-              type: item.type || null,
-            };
-            markdown += `\n${item.text}[${ref}]`;
-          }
+
           if (p.caption) markdown += `\n\n*Caption: ${escapeForLLM(p.caption)}*`;
           markdown += '\n\n';
           continue;
