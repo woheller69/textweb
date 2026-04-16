@@ -542,7 +542,7 @@ async function renderMarkdown(page, options = {}) {
         if (viewportHeight !== null && (bottom < scrollY || top > scrollY + viewportHeight)) continue;
 
         // ✅ NEW: Skip containers that are significantly taller than viewport (likely layout wrappers)
-        if (viewportHeight !== null && height > viewportHeight * 2) continue;
+        if (viewportHeight !== null && height > viewportHeight * 5) continue;
 
         const containerInteractives = allInteractives.filter(item =>
           container.contains(item.el) && !usedInteractives.has(item.el)
