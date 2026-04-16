@@ -39,14 +39,41 @@ node cli.js--interactive https://github.com
 ## Example Output
 
 ```
-[0]Hacker News [1]new | [2]past | [3]comments | [4]ask | [5]show | [6]jobs | [7]submit      [8]login
+Navigating to: https://fdroid.org
+[button][1]
 
- 1. [9]Show HN: TextWeb – text-grid browser for AI agents (github.com)
-    142 points by chrisrobison 3 hours ago | [10]89 comments
- 2. [11]Why LLMs don't need screenshots to browse the web
-    87 points by somebody 5 hours ago | [12]34 comments
+https://keepandroidopen.org/[2]
 
-[13:______________________] [14 Search]
+[link][3]
+
+APPS[4]
+
+NEWS[5]
+
+DOCS[6]
+
+ISSUES[7]
+
+CONTRIBUTE[8]
+
+ABOUT[9]
+
+
+### Your trusted home for Free and Open Source Mobile Apps
+
+English[10]
+
+
+### Find Apps
+
+F-Droid is the app distribution ecosystem for Android where your user freedom comes first. Discover our app store, explore the world of free and open source (FOSS) apps and learn[11] about our app distribution tools.
+
+q[12]
+
+[Search][13]
+
+DOWNLOAD F-DROID[14]
+
 ```
 
 ~500 bytes. An LLM can read this, understand the layout, and say "click ref 9" to open the first link. No vision model needed.
@@ -73,3 +100,36 @@ textweb-mcp --host= --port=...
 ```
 
 ### MCP Tools
+
+The server exposes the following tools:
+
+| Tool | Description |
+|------|-------------|
+| `textweb_ddg_search` | Search DuckDuckGo via HTTP POST (no browser). Returns up to 20 structured results (title, link, snippet). Optimized for reliability. |
+| `textweb_navigate` | Navigate to a URL and render the page as markdown with annotated interactive elements. Primary way to view web pages. |
+| `textweb_navigate_back` | Navigate back in browser history. |
+| `textweb_click` | Click an interactive element by its reference number. Returns updated markdown after the click. |
+| `textweb_type` | Type text into an input field by its reference number. Clears existing content and types the new text. |
+| `textweb_select` | Select an option from a dropdown/select element by its reference number. |
+| `textweb_scroll` | Scroll the page up or down (or to top). Returns updated markdown showing new viewport position. |
+| `textweb_snapshot` | Re-render the current page as markdown without navigating. Useful after waiting for dynamic content. |
+| `textweb_press` | Press a keyboard key (e.g., Enter, Tab, Escape, ArrowDown). Returns updated markdown. |
+| `textweb_session_list` | List active sessions and basic metadata (url, age). |
+| `textweb_session_close` | Close one session by session_id, or all sessions when `all=true`. |
+| `textweb_upload` | Upload a file to a file input element by its reference number. |
+| `textweb_storage_save` | Save current browser storage state (cookies/localStorage/sessionStorage) to disk for later restore. |
+| `textweb_storage_load` | Load storage state from disk into a fresh browser context. |
+| `textweb_wait_for` | Wait for UI state in multi-step flows. Supports selector text, and url_includes checks. |
+| `textweb_assert_field` | Assert a field value/text by element ref. Useful in multi-step forms before submitting. |
+
+#### Usage Example
+With this your LLM can do things like:
+
+```
+navigate https://example.com
+
+type 1 password
+
+click 2
+
+```
