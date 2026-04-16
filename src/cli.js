@@ -8,7 +8,19 @@ const { AgentBrowser } = require('./browser');
 const { ensureBrowser } = require('./ensure-browser');
 const readline = require('readline');
 
-// Parse command line arguments
+/**
+ * Parse command-line arguments into structured options.
+ * Supported arguments:
+ *   - `<url>` (positional, required for non-help operations)
+ *   - `--interactive`, `-i` → interactive mode
+ *   - `--help`, `-h` → show help
+ * @returns {{
+ *   url: string|null,
+ *   interactive: boolean,
+ *   help: boolean,
+ *   cols?: number
+ * }} Parsed options object
+ */
 function parseArgs() {
   const args = process.argv.slice(2);
   const options = {
@@ -19,7 +31,7 @@ function parseArgs() {
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    
+
     switch (arg) {
       case '--interactive':
       case '-i':
@@ -30,7 +42,7 @@ function parseArgs() {
       case '-h':
         options.help = true;
         break;
-        
+
       default:
         if (!arg.startsWith('-') && !options.url) {
           options.url = arg;
@@ -42,7 +54,9 @@ function parseArgs() {
   return options;
 }
 
-// Show help message
+/**
+ * Display help message to stdout.
+ */
 function showHelp() {
   console.log(`
 TextWeb - Text-grid web renderer for AI agents
@@ -74,7 +88,13 @@ INTERACTIVE COMMANDS:
 `);
 }
 
-// Main render function
+/**
+ * Render a single page snapshot and print to stdout, then exit.
+ * Uses headless mode, ensures browser, navigates, snapshots, and displays elements.
+ * @param {string} url - URL to navigate to
+ * @param {Object} [options] - Rendering options (currently unused, but kept for extensibility)
+ * @returns {Promise<void>}
+ */
 async function render(url, options) {
   const browser = new AgentBrowser({
     cols: options.cols,
@@ -87,17 +107,17 @@ async function render(url, options) {
     const result = await browser.navigate(url);
 
     console.log(result.view);
-      
+
     // Show element references
     const elCount = Object.keys(result.elements || {}).length;
     if (elCount > 0) {
-      console.error(`\\nInteractive elements:`);
+      console.error(`\nInteractive elements:`);
       for (const [ref, element] of Object.entries(result.elements || {})) {
         console.error(`[${ref}] ${element.semantic || element.tag}: ${element.text || '(no text)'}`);
       }
     }
 
-    
+
   } catch (error) {
     console.error(`Error: ${error.message}`);
     process.exit(1);
@@ -106,7 +126,13 @@ async function render(url, options) {
   }
 }
 
-// Interactive REPL mode
+/**
+ * Start an interactive REPL session.
+ * Supports navigation, element interaction (click/type/select), scrolling, querying, and more.
+ * @param {string} [url] - Optional initial URL to navigate to
+ * @param {Object} [options] - CLI options (currently unused)
+ * @returns {Promise<void>}
+ */
 async function interactive(url, options) {
   const browser = new AgentBrowser({
     cols: options.cols,
@@ -130,14 +156,14 @@ async function interactive(url, options) {
       console.log(result.view);
       console.log(`\nElements: ${Object.keys(result.elements || {}).length} interactive elements found`);
     }
-    
+
     console.log(`\nType 'help' for commands, 'quit' to exit`);
     rl.prompt();
 
     rl.on('line', async (input) => {
       const parts = input.trim().split(/\s+/);
       const command = parts[0].toLowerCase();
-      
+
       try {
         switch (command) {
           case 'help':
@@ -157,7 +183,7 @@ Interactive Commands:
   quit, exit                  Exit
 `);
             break;
-            
+
           case 'click':
             if (parts.length < 2) {
               console.log('Usage: click <ref>');
@@ -167,7 +193,7 @@ Interactive Commands:
               console.log(result.view);
             }
             break;
-            
+
           case 'type':
             if (parts.length < 3) {
               console.log('Usage: type <ref> <text>');
@@ -178,7 +204,7 @@ Interactive Commands:
               console.log(result.view);
             }
             break;
-            
+
           case 'upload':
             if (parts.length < 3) {
               console.log('Usage: upload <ref> <filepath> [filepath2 ...]');
@@ -200,7 +226,7 @@ Interactive Commands:
               console.log(result.view);
             }
             break;
-            
+
           case 'select':
             if (parts.length < 3) {
               console.log('Usage: select <ref> <value>');
@@ -211,7 +237,7 @@ Interactive Commands:
               console.log(result.view);
             }
             break;
-            
+
           case 'snapshot':
             result = await browser.snapshot();
             console.log(result.view);
@@ -221,7 +247,7 @@ Interactive Commands:
             result = await browser.goBack();
             console.log(result.view);
             break;
-            
+
           case 'query':
             if (parts.length < 2) {
               console.log('Usage: query <selector>');
@@ -245,13 +271,13 @@ Interactive Commands:
               console.log(result.view);
             }
             break;
-            
+
           case 'screenshot':
             const filename = parts[1] || 'screenshot.png';
             await browser.screenshot({ path: filename });
             console.log(`Screenshot saved to: ${filename}`);
             break;
-            
+
           case 'elements':
             if (result && Object.keys(result.elements || {}).length > 0) {
               console.log(`Interactive elements (${Object.keys(result.elements || {}).length}):`);
@@ -262,25 +288,25 @@ Interactive Commands:
               console.log('No interactive elements found');
             }
             break;
-            
+
           case 'url':
             console.log(`Current URL: ${browser.getCurrentUrl() || 'Not navigated'}`);
             break;
-            
+
           case 'clear':
             console.clear();
             break;
-            
+
           case 'quit':
           case 'exit':
             console.log('Goodbye!');
             rl.close();
             return;
-            
+
           case '':
             // Empty command, just re-prompt
             break;
-            
+
           default:
             console.log(`Unknown command: ${command}. Type 'help' for available commands.`);
             break;
@@ -288,12 +314,12 @@ Interactive Commands:
       } catch (error) {
         console.error(`Error: ${error.message}`);
       }
-      
+
       rl.prompt();
     });
 
     rl.on('close', async () => {
-      console.log('\\nClosing browser...');
+      console.log('\nClosing browser...');
       await browser.close();
       process.exit(0);
     });
@@ -305,7 +331,12 @@ Interactive Commands:
   }
 }
 
-// Main entry point
+/**
+ * Main entry point for the CLI.
+ * Handles argument parsing, help display, browser installation (if needed),
+ * and dispatches to render or interactive mode.
+ * @returns {Promise<void>}
+ */
 async function main() {
   const options = parseArgs();
   if (options.error) {
@@ -313,7 +344,7 @@ async function main() {
     showHelp();
     process.exit(1);
   }
-  
+
   if (options.help || (process.argv.length === 2)) {
     showHelp();
     return;
@@ -331,18 +362,23 @@ async function main() {
   }
 }
 
-// Handle graceful shutdown
+/**
+ * Handle graceful shutdown on SIGINT (Ctrl+C).
+ */
 process.on('SIGINT', () => {
-  console.log('\\nShutting down...');
+  console.log('\nShutting down...');
   process.exit(0);
 });
 
+/**
+ * Handle graceful shutdown on SIGTERM.
+ */
 process.on('SIGTERM', () => {
-  console.log('\\nShutting down...');
+  console.log('\nShutting down...');
   process.exit(0);
 });
 
-// Run CLI
+// Run CLI only if executed directly (not imported as module)
 if (require.main === module) {
   main().catch(error => {
     console.error(`Fatal error: ${error.message}`);

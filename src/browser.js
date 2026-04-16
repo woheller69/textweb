@@ -13,19 +13,78 @@ const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Appl
 
 const { renderMarkdown } = require('./renderer');
 
+/**
+ * AgentBrowser — manages a headless/headed Chromium instance for web automation and perception.
+ * Provides high-level actions (navigate, click, type, scroll, etc.) with retry logic,
+ * viewport-aware rendering, and element introspection via reference IDs.
+ */
 class AgentBrowser {
+  /**
+   * Construct an AgentBrowser instance.
+   * @param {Object} [options] - Configuration options
+   * @param {number} [options.timeout=10000] - Default operation timeout in ms
+   * @param {number} [options.retries=2] - Default number of retries per operation
+   * @param {number} [options.retryDelayMs=250] - Delay between retries in ms
+   */
   constructor(options = {}) {
+    /**
+     * Current vertical scroll position (in pixels from top)
+     * @type {number}
+     */
     this.scrollY = 0;
+    /**
+     * Playwright Browser instance (when launched)
+     * @type {import('playwright').Browser|null}
+     */
     this.browser = null;
+    /**
+     * Playwright BrowserContext instance
+     * @type {import('playwright').BrowserContext|null}
+     */
     this.context = null;
+    /**
+     * Playwright Page instance for current session
+     * @type {import('playwright').Page|null}
+     */
     this.page = null;
+    /**
+     * Last rendered result (`view`, `elements`, `meta`)
+     * @type {Object|null}
+     */
     this.lastResult = null;
+    /**
+     * Whether to launch browser in headful mode (for debugging)
+     * @type {boolean}
+     */
     this.headless = false; //open browser window for debugging. Sometimes we need to accept cookies, etc
+    /**
+     * Default timeout for operations (ms)
+     * @type {number}
+     */
     this.defaultTimeout = options.timeout || 10000;
+    /**
+     * Default number of retries per operation
+     * @type {number}
+     */
     this.defaultRetries = options.retries ?? 2;
+    /**
+     * Default delay between retries (ms)
+     * @type {number}
+     */
     this.defaultRetryDelayMs = options.retryDelayMs ?? 250;
   }
 
+  /**
+   * Execute an async operation with automatic retries and exponential backoff.
+   * @param {string} actionName - Human-readable name for error messages
+   * @param {function():Promise<T>} fn - Async function to retry
+   * @param {Object} [options] - Optional override for retry settings
+   * @param {number} [options.retries] - Overrides default retries
+   * @param {number} [options.retryDelayMs] - Overrides default delay
+   * @returns {Promise<T>} Result of fn on success
+   * @throws {Error} If all attempts fail
+   * @template T
+   */
   async _withRetries(actionName, fn, options = {}) {
     const retries = options.retries ?? this.defaultRetries;
     const retryDelayMs = options.retryDelayMs ?? this.defaultRetryDelayMs;
@@ -44,6 +103,11 @@ class AgentBrowser {
     throw new Error(`${actionName} failed after ${retries + 1} attempt(s): ${lastError?.message || 'unknown error'}`);
   }
 
+  /**
+   * Generate context launch options (viewport, user agent, storage state).
+   * @param {string|null} storageStatePath - Optional path to preloaded storage state
+   * @returns {Object} Options compatible with `browser.newContext()`
+   */
   _contextOptions(storageStatePath = null) {
     const opts = {
       viewport: DEFAULT_VIEWPORT,
@@ -55,6 +119,12 @@ class AgentBrowser {
     return opts;
   }
 
+  /**
+   * Create a new browser context and page, applying network route filters.
+   * Images and media resources are blocked to save bandwidth.
+   * @param {string|null} storageStatePath - Optional path to load storage state from
+   * @returns {Promise<void>}
+   */
   async _createContext(storageStatePath = null) {
     this.context = await this.browser.newContext(this._contextOptions(storageStatePath));
     this.page = await this.context.newPage();
@@ -71,6 +141,13 @@ class AgentBrowser {
     this.page.setDefaultTimeout(this.defaultTimeout);
   }
 
+  /**
+   * Launch browser (if needed) and create a new context (if needed).
+   * Idempotent: safe to call multiple times.
+   * @param {Object} [options] - Launch options
+   * @param {string} [options.storageStatePath] - Path to load cookies/localStorage from
+   * @returns {AgentBrowser} this instance (for chaining)
+   */
   async launch(options = {}) {
     if (!this.browser) {
       this.browser = await chromium.launch({
@@ -86,6 +163,14 @@ class AgentBrowser {
     return this;
   }
 
+  /**
+   * Navigate to a URL and perform initial render.
+   * Waits for `domcontentloaded` + short network settle, but avoids `networkidle` for SPAs.
+   * @param {string} url - Target URL to navigate to
+   * @param {Object} [options] - Navigation options (passed to `_withRetries`)
+   * @param {number} [options.timeoutMs] - Override timeout
+   * @returns {Promise<Object>} Render result: `{ view, elements, meta }`
+   */
   async navigate(url, options = {}) {
     if (!this.page) await this.launch();
     this.scrollY = 0;
@@ -103,6 +188,11 @@ class AgentBrowser {
     return await this.snapshot();
   }
 
+  /**
+   * Capture and render the current viewport state.
+   * Updates `scrollY`, then invokes `renderMarkdown`.
+   * @returns {Promise<Object>} Render result: `{ view, elements, meta }`
+   */
   async snapshot() {
     if (!this.page) throw new Error('No page open. Call navigate() first.');
     this.scrollY = await this.page.evaluate(() => window.scrollY);  //sync with browser window
@@ -122,6 +212,11 @@ class AgentBrowser {
     return this.lastResult;
   }
 
+  /**
+   * Check whether a given href is a valid, navigable HTTP/HTTPS URL.
+   * @param {string|null} href - URL string to validate
+   * @returns {boolean}
+   */
   _isNavigableUrl(href) {
     if (!href || typeof href !== 'string') return false;
     try {
@@ -132,6 +227,14 @@ class AgentBrowser {
     }
   }
 
+  /**
+   * Click an element by reference ID, either via navigation (if link) or simulated click.
+   * - For links: uses `navigate()` for speed and robustness
+   * - For buttons/interactive elements: uses Playwright locator + scroll + offset click
+   * @param {string|number} ref - Reference ID or selector key
+   * @param {Object} [options] - Click options (passed to `_withRetries`)
+   * @returns {Promise<Object>} Updated render result after action
+   */
   async click(ref, options = {}) {
     const el = this._getElement(ref); // Already validates existence
 
@@ -169,6 +272,14 @@ class AgentBrowser {
     return await this.snapshot();
   }
 
+  /**
+   * Type into an element (input/textarea) by reference ID.
+   * Clicks first, then fills.
+   * @param {string|number} ref - Reference ID
+   * @param {string} text - Text to type
+   * @param {Object} [options] - Options (passed to `_withRetries`)
+   * @returns {Promise<Object>} Updated render result
+   */
   async type(ref, text, options = {}) {
     const el = this._getElement(ref);
     await this._withRetries(`type ref=${ref}`, async () => {
@@ -179,7 +290,11 @@ class AgentBrowser {
   }
 
   /**
-   * Fill a field by CSS selector without re-rendering (faster for batch fills)
+   * Fill a field by CSS selector without re-rendering (faster for batch fills).
+   * Uses native `fill` first, falls back to character-by-character `type` if needed.
+   * @param {string} selector - CSS selector
+   * @param {string} text - Text to fill
+   * @returns {Promise<void>}
    */
   async fillBySelector(selector, text) {
     try {
@@ -201,13 +316,23 @@ class AgentBrowser {
   }
 
   /**
-   * Upload a file by CSS selector
+   * Upload one or more files via file input.
+   * @param {string} selector - CSS selector for `<input type="file">`
+   * @param {string|string[]} filePaths - File path(s) to upload
+   * @returns {Promise<void>}
    */
   async uploadBySelector(selector, filePaths) {
     const paths = Array.isArray(filePaths) ? filePaths : [filePaths];
     await this.page.setInputFiles(selector, paths);
   }
 
+  /**
+   * Press a keyboard key (e.g., 'Enter', 'Escape').
+   * Automatically settles after action.
+   * @param {string} key - Key name (e.g., 'Enter', 'Tab', 'ArrowDown')
+   * @param {Object} [options] - Options (passed to `_withRetries`)
+   * @returns {Promise<Object>} Updated render result
+   */
   async press(key, options = {}) {
     await this._withRetries(`press key=${key}`, async () => {
       await this.page.keyboard.press(key);
@@ -216,6 +341,13 @@ class AgentBrowser {
     return await this.snapshot();
   }
 
+  /**
+   * Upload file(s) to an element by reference ID.
+   * @param {string|number} ref - Reference ID
+   * @param {string|string[]} filePaths - File path(s)
+   * @param {Object} [options] - Options (passed to `_withRetries`)
+   * @returns {Promise<Object>} Updated render result
+   */
   async upload(ref, filePaths, options = {}) {
     const el = this._getElement(ref);
     const paths = Array.isArray(filePaths) ? filePaths : [filePaths];
@@ -225,6 +357,13 @@ class AgentBrowser {
     return await this.snapshot();
   }
 
+  /**
+   * Select an option in a `<select>` element by reference ID.
+   * @param {string|number} ref - Reference ID
+   * @param {string} value - Option value to select
+   * @param {Object} [options] - Options (passed to `_withRetries`)
+   * @returns {Promise<Object>} Updated render result
+   */
   async select(ref, value, options = {}) {
     const el = this._getElement(ref);
     await this._withRetries(`select ref=${ref}`, async () => {
@@ -233,6 +372,12 @@ class AgentBrowser {
     return await this.snapshot();
   }
 
+  /**
+   * Scroll the viewport vertically.
+   * @param {'up'|'down'|'top'} direction - Scroll direction
+   * @param {number} [amount=1] - Number of viewport heights to scroll
+   * @returns {Promise<Object>} Updated render result
+   */
   async scroll(direction = 'down', amount = 1) {
     // Scroll by one "page" = viewport height
 
@@ -249,12 +394,22 @@ class AgentBrowser {
     return await this.snapshot();
   }
 
+  /**
+   * Execute arbitrary JavaScript in page context.
+   * @param {function(...args):T} fn - Function to evaluate
+   * @param {any} arg - Argument passed to `fn`
+   * @returns {Promise<T>} Result of evaluation
+   * @template T
+   */
   async evaluate(fn, arg) {
     return await this.page.evaluate(fn, arg);
   }
 
   /**
-   * Save cookies/localStorage/sessionStorage state to disk
+   * Save cookies/localStorage/sessionStorage to disk (Playwright storage state).
+   * @param {string} path - Output path (e.g., `./state.json`)
+   * @returns {Promise<{saved: true, path: string}>}
+   * @throws {Error} If no context is open
    */
   async saveStorageState(path) {
     if (!this.context) throw new Error('No browser context open.');
@@ -263,7 +418,10 @@ class AgentBrowser {
   }
 
   /**
-   * Load cookies/localStorage/sessionStorage state from disk into a fresh context
+   * Load cookies/localStorage/sessionStorage from disk into a fresh context.
+   * Closes any existing context/page.
+   * @param {string} path - Input path (e.g., `./state.json`)
+   * @returns {Promise<{loaded: true, path: string}>}
    */
   async loadStorageState(path) {
     if (!this.browser) {
@@ -283,8 +441,15 @@ class AgentBrowser {
   }
 
   /**
-   * Wait until one or more conditions are true, then return a fresh snapshot.
-   * Supported conditions: selector, text, urlIncludes.
+   * Wait until specified conditions are met (selector, text, or URL match), then snapshot.
+   * @param {Object} options - Conditions to wait for
+   * @param {string} [options.selector] - Wait for element matching selector
+   * @param {'visible'|'hidden'|'attached'|'detached'} [options.state='visible'] - Element state
+   * @param {string} [options.text] - Wait for text in body
+   * @param {string} [options.urlIncludes] - Wait for URL substring
+   * @param {number} [options.timeoutMs] - Global timeout
+   * @param {number} [options.pollMs=100] - Polling interval
+   * @returns {Promise<Object>} Updated render result
    */
   async waitFor(options = {}) {
     if (!this.page) throw new Error('No page open. Call navigate() first.');
@@ -336,8 +501,13 @@ class AgentBrowser {
   }
 
   /**
-   * Assert a field's value/text by ref.
-   * comparator: equals | includes | regex | not_empty
+   * Assert a field's current value/text using various comparators.
+   * @param {string|number} ref - Reference ID
+   * @param {string|number} expected - Expected value
+   * @param {Object} [options] - Assertion options
+   * @param {'equals'|'includes'|'regex'|'not_empty'} [options.comparator='equals'] - Comparison strategy
+   * @param {string|null} [options.attribute=null] - Optional attribute to compare (instead of text/value)
+   * @returns {Promise<{pass: boolean, ref: number|string, selector: string, comparator: string, expected: string, actual: string}>}
    */
   async assertField(ref, expected, options = {}) {
     if (!this.page) throw new Error('No page open. Call navigate() first.');
@@ -393,6 +563,10 @@ class AgentBrowser {
     };
   }
 
+  /**
+   * Close the browser, cleanup contexts and pages.
+   * Safe to call multiple times.
+   */
   async close() {
     if (this.browser) {
       await this.browser.close();
@@ -403,15 +577,17 @@ class AgentBrowser {
   }
 
   /**
-   * Get the current page URL
+   * Get the current page URL.
+   * @returns {string|null} Current URL or `null` if no page active
    */
   getCurrentUrl() {
     return this.page ? this.page.url() : null;
   }
 
   /**
-   * Find elements matching a CSS selector
-   * Returns array of {tag, text, selector, visible} objects
+   * Query elements matching a CSS selector and return metadata.
+   * @param {string} selector - CSS selector
+   * @returns {Promise<Array<{tag: string, text: string, selector: string, visible: boolean, href: string|null, value: string|null}>>}
    */
   async query(selector) {
     if (!this.page) throw new Error('No page open. Call navigate() first.');
@@ -429,8 +605,9 @@ class AgentBrowser {
   }
 
   /**
-   * Take a screenshot (for debugging)
-   * @param {object} options - Playwright screenshot options (path, fullPage, type, etc.)
+   * Take a screenshot (for debugging).
+   * @param {Object} [options] - Optional screenshot options (see Playwright docs)
+   * @returns {Promise<Buffer>} PNG buffer (or path if `path` is provided)
    */
   async screenshot(options = {}) {
     if (!this.page) throw new Error('No page open. Call navigate() first.');
@@ -442,8 +619,18 @@ class AgentBrowser {
   }
 
   /**
-   * Wait for page to settle after an interaction.
-   * Races networkidle against a short timeout to avoid hanging on SPAs.
+   * Navigate back in browser history and snapshot.
+   * @returns {Promise<Object>} Updated render result
+   */
+  async goBack() {
+    await this.page.goBack();
+    return await this.snapshot();
+  }
+
+  /**
+   * Wait for page to settle after interaction: tries `networkidle` first, falls back to 3s timeout.
+   * Used internally to ensure DOM is stable before snapshot/click/etc.
+   * @returns {Promise<void>}
    */
   async _settle() {
     await Promise.race([
@@ -452,6 +639,13 @@ class AgentBrowser {
     ]);
   }
 
+  /**
+   * Get interactive element metadata by reference ID.
+   * Validates existence and returns raw entry from `lastResult.elements`.
+   * @param {string|number} ref - Reference ID
+   * @returns {InteractiveElement} Element metadata
+   * @throws {Error} If no snapshot exists or element not found
+   */
   _getElement(ref) {
     if (!this.lastResult) throw new Error('No snapshot. Navigate first.');
     const el = this.lastResult.elements[ref];
@@ -459,10 +653,6 @@ class AgentBrowser {
     return el;
   }
 
-  async goBack() {
-    await this.page.goBack();
-    return await this.snapshot();
-  }
 }
 
 module.exports = { AgentBrowser };

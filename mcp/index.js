@@ -6,7 +6,7 @@
  * Model Context Protocol server that gives any MCP client
  * text-based web browsing capabilities.
  *
- * Communicates over stdio using JSON-RPC 2.0 or streamable http
+ * Communicates over stdio using JSON-RPC 2.0 or streamable HTTP
  */
 
 const { AgentBrowser } = require('../src/browser');
@@ -14,13 +14,31 @@ const { ensureBrowser } = require('../src/ensure-browser');
 const http = require('http');  // ← required for HTTP server
 const cheerio = require('cheerio');
 
+/**
+ * Server metadata.
+ * @type {Object}
+ * @property {string} name - Server name ("textweb")
+ * @property {string} version - Semantic version string ("0.5.0")
+ */
 const SERVER_INFO = {
   name: 'textweb',
   version: '0.5.0',
 };
 
+/**
+ * Common description snippet used across tool schemas for session_id.
+ * @type {string}
+ */
 const SESSION_NOTE = 'Optional session_id to isolate state across flows. Defaults to "default".';
 
+/**
+ * List of tools exposed via the Model Context Protocol.
+ * Each entry defines name, description, and inputSchema for an MCP-compatible client.
+ * @type {Array<Object>}
+ * @property {string} name - Tool name (e.g., 'textweb_navigate')
+ * @property {string} description - Human-readable description of tool behavior
+ * @property {Object} inputSchema - JSON Schema for tool parameters
+ */
 const TOOLS = [
   {
     name: 'textweb_ddg_search',
@@ -242,6 +260,15 @@ const TOOLS = [
 const https = require('https');
 const zlib = require('zlib');
 
+/**
+ * Search DuckDuckGo Lite using HTTP POST.
+ * Returns formatted search results as a Markdown-like string.
+ * Handles gzip-compressed responses and redirects (uddg=).
+ * @param {string} query - Search query string
+ * @param {number} [maxResults=10] - Maximum number of results to return (1–20)
+ * @returns {Promise<string>} Formatted search results or message if none found
+ * @throws {Error} On network error, empty response, or parsing failure
+ */
 async function ddgSearch(query, maxResults = 10) {
   const queryEncoded = encodeURIComponent(query);
 
@@ -387,10 +414,24 @@ async function ddgSearch(query, maxResults = 10) {
 /** @type {Map<string, AgentBrowser>} */
 const sessions = new Map();
 
+/**
+ * Resolve session ID from arguments or use default.
+ * Trims whitespace and returns 'default' if falsy.
+ * @param {Object} [args] - Arguments object (e.g., tool parameters)
+ * @param {string} [args.session_id] - Optional explicit session ID
+ * @returns {string} Resolved session ID
+ */
 function resolveSessionId(args = {}) {
   return (args.session_id || 'default').trim() || 'default';
 }
 
+/**
+ * Get or create a browser instance for the given session ID.
+ * Creates and launches a new AgentBrowser if none exists.
+ * @param {Object} [args] - Arguments including optional session_id
+ * @param {string} [args.session_id] - Session identifier
+ * @returns {Promise<{browser: AgentBrowser, sessionId: string}>} Browser instance and resolved session ID
+ */
 async function getBrowser(args = {}) {
   const sessionId = resolveSessionId(args);
   let browser = sessions.get(sessionId);
@@ -404,6 +445,12 @@ async function getBrowser(args = {}) {
   return { browser, sessionId };
 }
 
+/**
+ * Format a render result into a single-line or multi-line text suitable for MCP responses.
+ * Includes URL, viewport, title, reference count, view, and interactive element list.
+ * @param {Object} result - Render result with `view`, `elements`, and `meta`
+ * @returns {string} Formatted text
+ */
 function formatResult(result) {
   const refs = Object.entries(result.elements || {})
     .map(([ref, el]) => `[${ref}] ${el.semantic}: ${el.text || '(no text)'}: ${el.href || "no link"}`)
@@ -412,6 +459,13 @@ function formatResult(result) {
   return `URL: ${result.meta?.url || 'unknown'}\nVisible range (px): ${result.meta?.scrollY ?? 'unknown'} to ${result.meta?.scrollY+result.meta?.viewportHeight || 'unknown'} of ${result.meta?.fullHeight || 'unknown'}\nTitle: ${result.meta?.title || 'unknown'}\nRefs: ${result.meta?.totalRefs || 0}\n\n${result.view}\n\nInteractive elements:\n${refs}`;
 }
 
+/**
+ * Extract retry options from tool arguments.
+ * @param {Object} [args] - Tool arguments
+ * @param {number} [args.retries] - Retry count override
+ * @param {number} [args.retry_delay_ms] - Delay override
+ * @returns {Object} Object with `retries` and `retryDelayMs`, possibly undefined
+ */
 function retryOptions(args = {}) {
   return {
     retries: args.retries,
@@ -419,6 +473,10 @@ function retryOptions(args = {}) {
   };
 }
 
+/**
+ * List all active sessions and their basic metadata.
+ * @returns {Array<Object>} Array of session info objects: `{ session_id, url, initialized, refs }`
+ */
 async function listSessions() {
   const out = [];
   for (const [sessionId, browser] of sessions.entries()) {
@@ -432,6 +490,13 @@ async function listSessions() {
   return out;
 }
 
+/**
+ * Close a specific session or all sessions.
+ * @param {Object} options
+ * @param {string} [options.session_id] - Session ID to close
+ * @param {boolean} [options.all] - Close all sessions
+ * @returns {Promise<Object>} `{ closed: string[], missing?: string[] }`
+ */
 async function closeSession({ session_id, all } = {}) {
   if (all) {
     const closed = [];
@@ -456,6 +521,14 @@ async function closeSession({ session_id, all } = {}) {
 
 // ─── Tool Execution ──────────────────────────────────────────────────────────
 
+/**
+ * Execute a tool by name and arguments.
+ * Dispatches to internal handler or session-aware browser operations.
+ * @param {string} name - Tool name (must match a `textweb_*` tool)
+ * @param {Object} [args] - Tool arguments (JSON parsed)
+ * @returns {Promise<string>} Tool result as a string (formatted or plain)
+ * @throws {Error} On unknown tool or failed execution
+ */
 async function executeTool(name, args = {}) {
   if (name === 'textweb_session_list') {
     const active = await listSessions();
@@ -550,14 +623,33 @@ async function executeTool(name, args = {}) {
 
 // ─── JSON-RPC / MCP Protocol ────────────────────────────────────────────────
 
+/**
+ * Build a valid JSON-RPC 2.0 successful response.
+ * @param {number|string|null} id - Request ID
+ * @param {any} result - Response payload
+ * @returns {string} JSON-RPC string
+ */
 function jsonrpc(id, result) {
   return JSON.stringify({ jsonrpc: '2.0', id, result });
 }
 
+/**
+ * Build a valid JSON-RPC 2.0 error response.
+ * @param {number|string|null} id - Request ID
+ * @param {number} code - Error code (e.g., -32601)
+ * @param {string} message - Human-readable error message
+ * @returns {string} JSON-RPC error string
+ */
 function jsonrpcError(id, code, message) {
   return JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } });
 }
 
+/**
+ * Handle a single JSON-RPC message.
+ * Supports methods: initialize, notifications/initialized, tools/list, tools/call, ping, others.
+ * @param {Object} msg - Parsed JSON-RPC message object
+ * @returns {Promise<string|null>} Response string, or `null` if no response expected
+ */
 async function handleMessage(msg) {
   const { id, method, params } = msg;
 
@@ -620,13 +712,25 @@ for (let i = 0; i < args.length; i++) {
 }
 if (options.host && options.port == null) options.port = 3000;
 
-// Add helper for safe logging (truncates long strings)
+/**
+ * Truncate a string to a maximum length, appending ellipsis and count of omitted chars.
+ * Used for logging to avoid extremely long messages.
+ * @param {string} str - Input string
+ * @param {number} [maxLen=500] - Maximum length before truncation
+ * @returns {string} Truncated or original string
+ */
 function truncate(str, maxLen = 500) {
   if (!str) return '';
   if (str.length <= maxLen) return str;
   return str.slice(0, maxLen) + `... (${str.length - maxLen} chars truncated)`;
 }
 
+/**
+ * Log verbose messages to stderr, only if `options.verbose` is true.
+ * Uses simple `%s` placeholder replacement.
+ * @param {string} msg - Message template
+ * @param {...string} args - Values to insert in `%s` placeholders
+ */
 function log(msg, ...args) {
   if (!options.verbose) return;
   const prefix = `[${new Date().toISOString()}] VERBOSE: `;
@@ -636,6 +740,9 @@ function log(msg, ...args) {
 console.error('✅ CLI options:', options);
 
 
+/**
+ * Entry point: decide whether to run stdio or HTTP transport based on options.
+ */
 function main() {
   if (options.host) {
     console.error(`🚀 Starting HTTP server on ${options.host}:${options.port}`);
@@ -647,6 +754,10 @@ function main() {
 }
 
 // ─── stdio Transport (original logic) ────────────────────────────────────────
+/**
+ * Set up stdio transport: read JSON-RPC messages from stdin, write responses to stdout.
+ * Closes all sessions and exits gracefully on SIGINT or EOF.
+ */
 function startStdioTransport() {
   let buffer = '';
 
@@ -689,6 +800,12 @@ function startStdioTransport() {
 }
 
 // ─── HTTP Transport (fully async-safe + verbose) ─────────────────────────────
+/**
+ * Start an HTTP server that accepts MCP Streamable HTTP requests.
+ * Supports JSON-RPC 2.0 over POST, CORS preflight, chunked responses, verbose logging.
+ * @param {string} host - Host to bind to (e.g., '127.0.0.1')
+ * @param {number} port - Port to listen on
+ */
 function startHttpServer(host, port) {
   const server = http.createServer(async (req, res) => {
     // ─── Full HTTP request logging (when verbose) ───────────────────────────

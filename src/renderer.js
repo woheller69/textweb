@@ -5,10 +5,16 @@
 
 /**
  * Main export: render entire page
- * @param {Page} page - Playwright Page
- * @param {Object} options - { scrollY, viewportHeight }
- * @returns {Promise<Object>} { view, elements, meta }
+ * @param {import('playwright').Page} page - Playwright Page instance
+ * @param {Object} options - Rendering options
+ * @param {number} [options.scrollY=0] - Vertical scroll position (in viewport pixels)
+ * @param {number|null} [options.viewportHeight=null] - Current viewport height; null means full page
+ * @returns {Promise<Object>} Render result:
+ *   - view {string} – Markdown-formatted content
+ *   - elements {Object<string,InteractiveElement>} – Map of interactive elements keyed by ref ID
+ *   - meta {Object} – Metadata: scrollY, viewportHeight, fullHeight, totalRefs, url, title
  */
+
 async function renderMarkdown(page, options = {}) {
   const { scrollY = 0, viewportHeight = null } = options;
 
@@ -18,6 +24,8 @@ async function renderMarkdown(page, options = {}) {
 
       /**
        * Decode HTML entities safely (in-browser)
+       * @param {string} str - Input string potentially containing HTML entities
+       * @returns {string} Decoded string
        */
       function decodeHTML(str) {
         if (!str) return '';
@@ -31,7 +39,9 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
-       * Is element visible & interactable?
+       * Check if an element is visible, has pointer events enabled, and is interactable via the mouse.
+       * @param {Element} el - DOM element to inspect
+       * @returns {boolean} true if element is visually and functionally visible
        */
       function hasPointerEvents(el) {
         const style = getComputedStyle(el);
@@ -47,7 +57,10 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
-       * Is element an interactive candidate?
+       * Determine whether an element is considered an interactive candidate
+       * (i.e., likely triggers UI interaction or navigation).
+       * @param {Element} el - DOM element
+       * @returns {boolean} true if element matches known interactive element types
        */
       function isInteractiveElement(el) {
         return (
@@ -63,7 +76,11 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
-       * Create a standardized elementMap entry for an interactive item
+       * Create a standardized element map entry for an interactive item.
+       * Used to populate the `elements` object returned in render result.
+       * @param {number} ref - Unique reference ID for this element
+       * @param {Object} item - Element data with properties like tag, selector, href, text, etc.
+       * @returns {InteractiveElement} Structured element entry
        */
       function createElementMapEntry(ref, item) {
         const tag = item.tag;
@@ -93,7 +110,11 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
-       * Build minimal CSS selector (stable, unique, no :has-text)
+       * Build a minimal, stable CSS selector for a given element.
+       * Prioritizes ID, then data-* attributes, aria-label, href/name attributes,
+       * class names, and finally positional selectors.
+       * @param {Element} el - DOM element
+       * @returns {string} Stable CSS selector string
        */
       function buildSimpleSelector(el) {
         if (el.id) return '#' + CSS.escape(el.id);
@@ -174,7 +195,10 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
-       * Parse table DOM
+       * Parse HTML table structure into headers and rows with interactive references.
+       * Handles colspan/rowspan and deduplication of spanning cells.
+       * @param {Element} table - Table DOM element
+       * @returns {{ headers: string[], rows: CellData[][] }} Parsed table data
        */
       function parseTableStructure(table) {
         const headers = [];
@@ -283,7 +307,12 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
-       * Render table to Markdown with alignment
+       * Determine column alignment based on content type (numeric vs. text).
+       * Used for Markdown table alignment rows.
+       * @param {string[]} headers - Column header names
+       * @param {CellData[][]} rows - Table rows (parsed)
+       * @param {number} colIndex - Index of column to assess
+       * @returns {'left'|'right'} Alignment hint
        */
       function getAlignment(headers, rows, colIndex) {
         const values = new Set();
@@ -300,6 +329,11 @@ async function renderMarkdown(page, options = {}) {
         return values.size === 0 ? 'left' : (values.size === 1 && values.has('numeric') ? 'right' : 'left');
       }
 
+      /**
+       * Render parsed table data to Markdown with alignment and escaping.
+       * @param {{ headers: string[], rows: CellData[][] }} tableData - Table structure from parseTableStructure
+       * @returns {string} Markdown table string
+       */
       function renderTable(tableData) {
         const { headers, rows } = tableData;
         if (!headers.length && !rows.length) return '';
@@ -334,7 +368,10 @@ async function renderMarkdown(page, options = {}) {
 
 
       /**
-       * Escape text for Markdown + LLM
+       * Escape text for Markdown (and downstream LLM processing) by escaping special characters.
+       * Also decodes HTML entities and normalizes whitespace.
+       * @param {string} str - Input string
+       * @returns {string} Escaped and normalized string
        */
       function escapeForLLM(str) {
         if (!str) return '';
@@ -347,14 +384,19 @@ async function renderMarkdown(page, options = {}) {
 
       /**
        * Embed an interactive reference into target text using @@REF_n@@ placeholder.
-       * Performs regex matching with word boundaries + delimiters, then replaces match.
+       * Tries regex match first, then optionally appends reference as fallback.
+       * Updates the element map with the new entry.
        * @param {string} targetText - The text to search/modify
-       * @param {Object} item - The interactive item with .text property
-       * @param {Object} elementMap - The map to register the ref entry
-       * @param {number} refId - Current ref counter
-       * @param {Object} options - { fallbackAppend?: boolean }
-       * @returns {{ text: string, refId: number, ref: number, matched: boolean }}
-       *          Updated text, new refId, assigned ref, and whether regex matched
+       * @param {Object} item - The interactive item (must have `.text` property)
+       * @param {Object} elementMap - Mutable map to register the ref entry
+       * @param {number} refId - Current reference counter (will be incremented if inserted)
+       * @param {Object} [options] - Options
+       * @param {boolean} [options.fallbackAppend=false] - Whether to append fallback if no regex match
+       * @returns {{ text: string, refId: number, ref: number|null, matched: boolean }}
+       *   - text {string} Updated text (with reference or unchanged)
+       *   - refId {number} Updated ref counter
+       *   - ref {number|null} ID of inserted reference (or null if not inserted)
+       *   - matched {boolean} Whether regex matched the reference text
        */
       function embedInteractiveRef(targetText, item, elementMap, refId, { fallbackAppend = false } = {}) {
         if (!item || !item.text?.trim()) {
@@ -391,7 +433,11 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
-       * Truncate text for metadata
+       * Truncate text for metadata (e.g., in elementMap).
+       * Stops at first newline if within limit, otherwise cuts at maxLen.
+       * @param {string} text - Input text
+       * @param {number} [maxLen=80] - Maximum length before truncation
+       * @returns {string} Truncated text (may end with ellipsis)
        */
       function truncateText(text, maxLen = 80) {
         if (!text) return '';
@@ -403,7 +449,9 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
-       * Get Playwright action
+       * Get the canonical Playwright action name for a given semantic type.
+       * @param {string} semantic - Semantic type (e.g., 'link', 'button', 'input')
+       * @returns {string} Action name: 'navigate', 'click', 'type', 'select', 'toggle', 'upload'
        */
       function getAction(semantic) {
         const actions = {
@@ -475,7 +523,7 @@ async function renderMarkdown(page, options = {}) {
       // ❌ DO NOT include td, th in containers — tables are parsed separately
       const allContainers = Array.from(document.querySelectorAll('p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, article'))
         .filter(el => !el.closest('table'));  // ← NEW: Exclude elements inside tables
-      
+
       const filteredContainers = allContainers.filter(c =>
         !allContainers.some(o => o !== c && o.contains(c))
       );
