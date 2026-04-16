@@ -183,11 +183,15 @@ async function renderMarkdown(page, options = {}) {
         const firstRow = table.querySelector('tr');
         if (!firstRow) return { headers: [], rows: [] };
 
-        const headerCells = firstRow.querySelectorAll('th, td');
-        headerCells.forEach((cell) => {
-          headers.push(cell.innerText.trim());
-        });
+        // Check if first row contains <th> elements
+        const hasTh = firstRow.querySelector('th') !== null;
 
+        if (hasTh) {
+          // Use <th> cells as headers
+          firstRow.querySelectorAll('th').forEach(cell => {
+            headers.push(cell.innerText.trim());
+          });
+        }
         const tbody = table.querySelector('tbody') || table;
         const trs = Array.from(tbody.querySelectorAll('tr'));
         const cellMap = [];
@@ -328,14 +332,6 @@ async function renderMarkdown(page, options = {}) {
         return `\n\n${hRow}\n${sepRow}\n${bodyRows.join('\n')}\n`;
       }
 
-       /**
-       * Compress markdown text for LLM
-       */
-      function compressForLLM(markdown) {
-        return markdown
-          .replace(/[ \t]{2,}/g, ' ')      // Collapse multiple spaces/tabs
-          .replace(/-{3,}/g, '---');       // Compress any sequence of 3+ dashes to exactly 3
-      }
 
       /**
        * Escape text for Markdown + LLM
@@ -489,8 +485,16 @@ async function renderMarkdown(page, options = {}) {
         const text = container.innerText?.trim();
         if (!text) continue;
 
-        const top = container.getBoundingClientRect().top + window.scrollY;
-        if (viewportHeight !== null && top > scrollY + viewportHeight) continue;
+        const rect = container.getBoundingClientRect();
+        const top = rect.top + window.scrollY;
+        const bottom = rect.bottom + window.scrollY;
+        const height = rect.height;
+
+        // Skip if entirely outside viewport
+        if (viewportHeight !== null && (bottom < scrollY || top > scrollY + viewportHeight)) continue;
+
+        // ✅ NEW: Skip containers that are significantly taller than viewport (likely layout wrappers)
+        if (viewportHeight !== null && height > viewportHeight * 2) continue;
 
         const containerInteractives = allInteractives.filter(item =>
           container.contains(item.el) && !usedInteractives.has(item.el)
@@ -672,7 +676,7 @@ async function renderMarkdown(page, options = {}) {
       }
 
       return {
-        view: compressForLLM(markdown.trim()),
+        view: markdown.trim(),
         elements: elementMap,
         meta: {
           scrollY,
