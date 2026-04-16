@@ -55,6 +55,16 @@ const TOOLS = [
     },
   },
   {
+    name: 'textweb_navigate_back',
+    description: 'Navigate back in browser history.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: SESSION_NOTE },
+      },
+    },
+  },
+  {
     name: 'textweb_click',
     description: 'Click an interactive element by its reference number. Returns the updated markdown text after the click (page may navigate or update).',
     inputSchema: {
@@ -472,6 +482,10 @@ async function executeTool(name, args = {}) {
   }
     case 'textweb_navigate': {
       const result = await b.navigate(args.url, retryOptions(args));
+      return formatResult(result);
+    }
+    case 'textweb_navigate_back': {
+      const result = await b.goBack();
       return formatResult(result);
     }
     case 'textweb_click': {

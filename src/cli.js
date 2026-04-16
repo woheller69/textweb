@@ -61,12 +61,12 @@ EXAMPLES:
 
 INTERACTIVE COMMANDS:
   click <ref>                        Click element by reference number
+  back                               Go back in browser history
   type <ref> <text>                  Type text into input element
   scroll <direction> [amount]        Scroll (up/down/top)
   select <ref> <value>               Select dropdown option
   snapshot                           Re-render current page
   query <selector>                   Find elements by CSS selector
-  region <r1> <c1> <r2> <c2>        Read text from grid region
   navigate <url>                     Navigate to new URL
   screenshot [filename]              Take screenshot (for debugging)
   help                               Show interactive commands
@@ -149,7 +149,6 @@ Interactive Commands:
   select <ref> <value>        Select option in dropdown [ref]
   snapshot                    Re-render current page
   query <selector>            Find elements by CSS selector
-  region <r1> <c1> <r2> <c2>  Read text from grid region
   navigate <url>              Navigate to new URL
   screenshot [file]           Take screenshot
   elements                    List all interactive elements
@@ -217,6 +216,11 @@ Interactive Commands:
             result = await browser.snapshot();
             console.log(result.view);
             break;
+
+          case 'back':
+            result = await browser.goBack();
+            console.log(result.view);
+            break;
             
           case 'query':
             if (parts.length < 2) {
@@ -230,21 +234,7 @@ Interactive Commands:
               });
             }
             break;
-            
-          case 'region':
-            if (parts.length < 5) {
-              console.log('Usage: region <r1> <c1> <r2> <c2>');
-            } else {
-              const r1 = parseInt(parts[1]);
-              const c1 = parseInt(parts[2]);
-              const r2 = parseInt(parts[3]);
-              const c2 = parseInt(parts[4]);
-              const text = browser.readRegion(r1, c1, r2, c2);
-              console.log(`Region (${r1},${c1}) to (${r2},${c2}):`);
-              console.log(text);
-            }
-            break;
-            
+
           case 'navigate':
             if (parts.length < 2) {
               console.log('Usage: navigate <url>');

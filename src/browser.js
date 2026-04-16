@@ -249,16 +249,6 @@ class AgentBrowser {
     return await this.snapshot();
   }
 
-  async readRegion(r1, c1, r2, c2) {
-    if (!this.lastResult) throw new Error('No snapshot. Navigate first.');
-    const lines = this.lastResult.view.split('\n');
-    const region = [];
-    for (let r = r1; r <= Math.min(r2, lines.length - 1); r++) {
-      region.push(lines[r].substring(c1, c2 + 1));
-    }
-    return region.join('\n');
-  }
-
   async evaluate(fn, arg) {
     return await this.page.evaluate(fn, arg);
   }
@@ -467,6 +457,11 @@ class AgentBrowser {
     const el = this.lastResult.elements[ref];
     if (!el) throw new Error(`Element ref [${ref}] not found. Available: ${Object.keys(this.lastResult.elements).join(', ')}`);
     return el;
+  }
+
+  async goBack() {
+    await this.page.goBack();
+    return await this.snapshot();
   }
 }
 
