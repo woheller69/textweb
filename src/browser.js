@@ -165,7 +165,7 @@ class AgentBrowser {
 
   /**
    * Navigate to a URL and perform initial render.
-   * Waits for `domcontentloaded` + short network settle, but avoids `networkidle` for SPAs.
+   * Waits for `load` (page is fully loaded) + short network settle
    * @param {string} url - Target URL to navigate to
    * @param {Object} [options] - Navigation options (passed to `_withRetries`)
    * @param {number} [options.timeoutMs] - Override timeout
@@ -176,8 +176,8 @@ class AgentBrowser {
     this.scrollY = 0;
 
     await this._withRetries('navigate', async () => {
-      // Use domcontentloaded + a short settle, not networkidle (SPAs never go idle)
-      await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: options.timeoutMs || this.defaultTimeout });
+      // Wait until page is fully loaded
+      await this.page.goto(url, { waitUntil: 'load', timeout: options.timeoutMs || this.defaultTimeout });
       // Wait for network to settle or 3s max — whichever comes first
       await Promise.race([
         this.page.waitForLoadState('networkidle').catch(() => {}),
@@ -201,7 +201,7 @@ class AgentBrowser {
       document.querySelectorAll('img').forEach(img => img.remove());
     });
     this.scrollY = await this.page.evaluate(() => window.scrollY);  //sync with browser window
-    await this.page.waitForTimeout(1000);
+
     this.lastResult = await renderMarkdown(this.page, {
       scrollY: this.scrollY,
       viewportHeight: DEFAULT_VIEWPORT.height,

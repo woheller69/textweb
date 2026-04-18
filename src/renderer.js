@@ -63,6 +63,11 @@ async function renderMarkdown(page, options = {}) {
        * @returns {boolean} true if element matches known interactive element types
        */
       function isInteractiveElement(el) {
+        // Exclude 'SPAN' as interactive element. May cause issues if span used as clickable element
+        if (['SPAN'].includes(el.tagName)) {
+          return false;
+        }
+
         return (
           el.tagName === 'A' ||
           el.tagName === 'BUTTON' ||
@@ -414,7 +419,7 @@ async function renderMarkdown(page, options = {}) {
         const safeText = escapedItemText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
         // Boundary-aware regex (matches word + common delimiters)
-        const regex = new RegExp(`(^|\\s|[(\\[])(\\b${safeText}\\b)(\\s|[.:;!?)\\]]|$)`, 'i');
+        const regex = new RegExp(`(^|\\s|[(\\[])(\\b${safeText}\\b)(\\s|[.:;,!?)\\]]|$)`, 'i');
         const match = targetText.match(regex);
 
         if (match) {
