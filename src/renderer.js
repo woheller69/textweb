@@ -521,7 +521,7 @@ async function renderMarkdown(page, options = {}) {
       const usedInteractives = new Set();
 
       // ❌ DO NOT include td, th in containers — tables are parsed separately
-      const allContainers = Array.from(document.querySelectorAll('p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, article'))
+      const allContainers = Array.from(document.querySelectorAll('p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6'))
         .filter(el => !el.closest('table'));  // ← NEW: Exclude elements inside tables
 
       const filteredContainers = allContainers.filter(c =>
@@ -657,8 +657,7 @@ async function renderMarkdown(page, options = {}) {
       for (const p of unique.sort((a, b) => a.y - b.y)) {
         if (p.isHeading && p.text) {
           const level = Math.min(6, p.headingLevel || 2);
-          markdown += `\n${'#'.repeat(level)} ${escapeForLLM(p.text)}\n\n`;
-          continue;
+          markdown += `\n${'#'.repeat(level)} `;
         }
 
         if (p.type === 'table') {
