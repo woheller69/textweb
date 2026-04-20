@@ -196,9 +196,11 @@ class AgentBrowser {
   async snapshot() {
     if (!this.page) throw new Error('No page open. Call navigate() first.');
     //TODO: make an option for this
-    // ✅ Remove ALL images after page settles
+    // ✅ Remove ALL images and videos after page settles
     await this.page.evaluate(() => {
-      document.querySelectorAll('img').forEach(img => img.remove());
+      document.querySelectorAll(
+        'img, video, picture, source, canvas, .aj-video-player, .video-page, .video-js, .live-stream-widget, .responsive-image'
+      ).forEach(el => el.remove());
     });
     this.scrollY = await this.page.evaluate(() => window.scrollY);  //sync with browser window
 
