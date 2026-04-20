@@ -74,16 +74,20 @@ EXAMPLES:
   textweb --interactive https://github.com
 
 INTERACTIVE COMMANDS:
-  click <ref>                        Click element by reference number
+  click <ref>                        Click element [ref]
   back                               Go back in browser history
-  type <ref> <text>                  Type text into input element
+  clear                              Console clear
+  type <ref> <text>                  Type text into input element [ref]
   scroll <direction> [amount]        Scroll (up/down/top)
-  select <ref> <value>               Select dropdown option
+  select <ref> <value>               Select dropdown option [ref]
   snapshot                           Re-render current page
   query <selector>                   Find elements by CSS selector
   navigate <url>                     Navigate to new URL
-  screenshot [filename]              Take screenshot (for debugging)
+  screenshot [filename]              Take screenshot
+  elements                           List all interactive elements
+  url                                Show current URL
   help                               Show interactive commands
+  delete                             Delete browser context (cache)                              
   quit, exit                         Exit interactive mode
 `);
 }
@@ -97,9 +101,7 @@ INTERACTIVE COMMANDS:
  */
 async function render(url, options) {
   const browser = new AgentBrowser({
-    cols: options.cols,
-
-    headless: true
+    headless: false
   });
 
   try {
@@ -137,7 +139,7 @@ async function interactive(url, options) {
   const browser = new AgentBrowser({
     cols: options.cols,
 
-    headless: true
+    headless: false
   });
 
   const rl = readline.createInterface({
@@ -169,18 +171,21 @@ async function interactive(url, options) {
           case 'help':
             console.log(`
 Interactive Commands:
-  click <ref>                 Click element [ref]
-  type <ref> <text>           Type text into element [ref]
-  scroll <dir> [amount]       Scroll direction (up/down/top)
-  select <ref> <value>        Select option in dropdown [ref]
-  snapshot                    Re-render current page
-  query <selector>            Find elements by CSS selector
-  navigate <url>              Navigate to new URL
-  screenshot [file]           Take screenshot
-  elements                    List all interactive elements
-  url                         Show current URL
-  clear                       Clear screen
-  quit, exit                  Exit
+  click <ref>                        Click element [ref]
+  back                               Go back in browser history
+  clear                              Console clear
+  type <ref> <text>                  Type text into input element [ref]
+  scroll <direction> [amount]        Scroll (up/down/top)
+  select <ref> <value>               Select dropdown option [ref]
+  snapshot                           Re-render current page
+  query <selector>                   Find elements by CSS selector
+  navigate <url>                     Navigate to new URL
+  screenshot [filename]              Take screenshot
+  elements                           List all interactive elements
+  url                                Show current URL
+  help                               Show interactive commands
+  delete                             Delete browser context (cache)                              
+  quit, exit                         Exit interactive mode
 `);
             break;
 
@@ -295,6 +300,10 @@ Interactive Commands:
 
           case 'clear':
             console.clear();
+            break;
+
+          case 'delete':
+            result = await browser.clearBrowserStorage();
             break;
 
           case 'quit':

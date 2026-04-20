@@ -437,7 +437,7 @@ async function getBrowser(args = {}) {
   let browser = sessions.get(sessionId);
 
   if (!browser) {
-    browser = new AgentBrowser({ cols: args.cols || 120, headless: true });
+    browser = new AgentBrowser({ headless: false });
     await browser.launch();
     sessions.set(sessionId, browser);
   }

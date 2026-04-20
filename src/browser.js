@@ -4,6 +4,8 @@
 
 const { chromium } = require('playwright-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const fs = require('fs');
+const path = require('path');
 
 // Register the stealth plugin globally
 chromium.use(StealthPlugin());
@@ -12,6 +14,16 @@ const DEFAULT_VIEWPORT = { width: 800, height: 1800 };
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 const { renderMarkdown } = require('./renderer');
+
+/**
+ * Ensure directory exists — helper to safely create parent dirs for storage path.
+ * @param {string} dir - Directory path to ensure exists
+ */
+function ensureDirSync(dir) {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
 
 /**
  * AgentBrowser — manages a headless/headed Chromium instance for web automation and perception.
@@ -25,6 +37,7 @@ class AgentBrowser {
    * @param {number} [options.timeout=10000] - Default operation timeout in ms
    * @param {number} [options.retries=2] - Default number of retries per operation
    * @param {number} [options.retryDelayMs=250] - Delay between retries in ms
+   * @param {string} [options.storagePath] - Optional custom path to persistent storage file
    */
   constructor(options = {}) {
     /**
@@ -32,46 +45,67 @@ class AgentBrowser {
      * @type {number}
      */
     this.scrollY = 0;
+
     /**
      * Playwright Browser instance (when launched)
      * @type {import('playwright').Browser|null}
      */
     this.browser = null;
+
     /**
      * Playwright BrowserContext instance
      * @type {import('playwright').BrowserContext|null}
      */
     this.context = null;
+
     /**
      * Playwright Page instance for current session
      * @type {import('playwright').Page|null}
      */
     this.page = null;
+
     /**
      * Last rendered result (`view`, `elements`, `meta`)
      * @type {Object|null}
      */
     this.lastResult = null;
+
     /**
      * Whether to launch browser in headful mode (for debugging)
      * @type {boolean}
      */
-    this.headless = false; //open browser window for debugging. Sometimes we need to accept cookies, etc
+    this.headless = options.headless ?? false; //open browser window for debugging. Sometimes we need to accept cookies, etc
+
     /**
      * Default timeout for operations (ms)
      * @type {number}
      */
     this.defaultTimeout = options.timeout || 10000;
+
     /**
      * Default number of retries per operation
      * @type {number}
      */
     this.defaultRetries = options.retries ?? 2;
+
     /**
      * Default delay between retries (ms)
      * @type {number}
      */
     this.defaultRetryDelayMs = options.retryDelayMs ?? 250;
+
+    // ────────────────────────────────
+    // Storage path configuration
+    // ────────────────────────────────
+    const homedir = require('os').homedir();
+    this.defaultStoragePath = path.join(homedir, '.config', 'textweb', 'storage.json');
+    this.currentStoragePath = options.storagePath || this.defaultStoragePath;
+
+    /**
+     * Auto-load storage from currentStoragePath on launch?
+     * @type {boolean}
+     */
+    this.autoLoadStorage = true;
   }
 
   /**
@@ -113,7 +147,8 @@ class AgentBrowser {
       viewport: DEFAULT_VIEWPORT,
       userAgent: DEFAULT_USER_AGENT,
     };
-    if (storageStatePath) {
+    // ✅ Only attach storageState if file actually exists (Playwright requires this)
+    if (storageStatePath && fs.existsSync(storageStatePath)) {
       opts.storageState = storageStatePath;
     }
     return opts;
@@ -128,14 +163,15 @@ class AgentBrowser {
   async _createContext(storageStatePath = null) {
     this.context = await this.browser.newContext(this._contextOptions(storageStatePath));
     this.page = await this.context.newPage();
+
+    // Network filtering: block images and media to save bandwidth
     await this.page.route("**/*", (route, request) => {
       if (request.resourceType() === "image") {  //we do not need to download images
-          route.abort();
-      } else if (request.resourceType === "media") { //we do not need audio and video
-        //abort the route
-          route.abort();
+        route.abort();
+      } else if (request.resourceType() === "media") { //we do not need audio and video
+        route.abort();
       } else {
-          route.continue();
+        route.continue();
       }
     });
     this.page.setDefaultTimeout(this.defaultTimeout);
@@ -144,8 +180,10 @@ class AgentBrowser {
   /**
    * Launch browser (if needed) and create a new context (if needed).
    * Idempotent: safe to call multiple times.
+   * Auto-loads storage state from `currentStoragePath` if exists — UNLESS `options.storageStatePath === null`.
    * @param {Object} [options] - Launch options
-   * @param {string} [options.storageStatePath] - Path to load cookies/localStorage from
+   * @param {string|null} [options.storageStatePath] - Explicit storage path (`null` → no loading)
+   * @param {boolean} [options.launchOnly] - If true, only launch browser (no context)
    * @returns {AgentBrowser} this instance (for chaining)
    */
   async launch(options = {}) {
@@ -156,8 +194,29 @@ class AgentBrowser {
       });
     }
 
+    if (options.launchOnly) {
+      return this;
+    }
+
     if (!this.context) {
-      await this._createContext(options.storageStatePath || null);
+      // Determine which storage state to use
+      let storageStatePath = null;
+
+      // Priority: explicit null → skip loading → else use `currentStoragePath`
+      if (options.storageStatePath === null) {
+        storageStatePath = null;
+      } else if (
+        this.autoLoadStorage &&
+        options.storageStatePath == null &&  // not overridden
+        fs.existsSync(this.currentStoragePath)
+      ) {
+        storageStatePath = this.currentStoragePath;
+      } else if (options.storageStatePath) {
+        storageStatePath = options.storageStatePath;
+      }
+
+      await this._createContext(storageStatePath);
+      console.debug(`[AgentBrowser] Context created with storage=${storageStatePath ? storageStatePath : 'null'}`);
     }
 
     return this;
@@ -179,10 +238,7 @@ class AgentBrowser {
       // Wait until page is fully loaded
       await this.page.goto(url, { waitUntil: 'load', timeout: options.timeoutMs || this.defaultTimeout });
       // Wait for network to settle or 3s max — whichever comes first
-      await Promise.race([
-        this.page.waitForLoadState('networkidle').catch(() => {}),
-        new Promise(r => setTimeout(r, 3000)),
-      ]);
+      await this._settle();
     }, options);
 
     return await this.snapshot();
@@ -191,6 +247,7 @@ class AgentBrowser {
   /**
    * Capture and render the current viewport state.
    * Updates `scrollY`, then invokes `renderMarkdown`.
+   * ✅ Auto-saves storage state to `currentStoragePath` *after* rendering (if enabled).
    * @returns {Promise<Object>} Render result: `{ view, elements, meta }`
    */
   async snapshot() {
@@ -202,7 +259,8 @@ class AgentBrowser {
         'img, video, picture, source, canvas, .aj-video-player, .video-page, .video-js, .live-stream-widget, .responsive-image'
       ).forEach(el => el.remove());
     });
-    this.scrollY = await this.page.evaluate(() => window.scrollY);  //sync with browser window
+
+    this.scrollY = await this.page.evaluate(() => window.scrollY);  // sync with browser window
 
     this.lastResult = await renderMarkdown(this.page, {
       scrollY: this.scrollY,
@@ -415,36 +473,75 @@ class AgentBrowser {
 
   /**
    * Save cookies/localStorage/sessionStorage to disk (Playwright storage state).
-   * @param {string} path - Output path (e.g., `./state.json`)
+   * Defaults to `this.currentStoragePath`.
+   * Creates parent directories if missing.
+   * @param {string} [filePath=this.currentStoragePath] - Output path (e.g., `./state.json`)
    * @returns {Promise<{saved: true, path: string}>}
    * @throws {Error} If no context is open
    */
-  async saveStorageState(path) {
+  async saveStorageState(filePath = this.currentStoragePath) {
     if (!this.context) throw new Error('No browser context open.');
-    await this.context.storageState({ path });
-    return { saved: true, path };
+    ensureDirSync(path.dirname(filePath));
+    await this.context.storageState({ path: filePath });
+    return { saved: true, path: filePath };
+  }
+
+  /**
+   * Clear browser storage by deleting the storage state file and resetting context.
+   * Ensures no stale cookies/localStorage persist to next session.
+   * Ensures browser remains running for next navigation to create a fresh context.
+   */
+  async clearBrowserStorage() {
+    const filePath = this.currentStoragePath;
+
+    // Delete the storage file first
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      console.debug(`[AgentBrowser] Storage cleared: deleted file "${filePath}"`);
+    }
+
+    // Reset context to force fresh state on next use
+    if (this.context) {
+      try {
+        await this.context.close();
+        this.context = null;
+        this.page = null;
+        console.debug(`[AgentBrowser] Context closed and reset to ensure clean slate`);
+      } catch (e) {
+        console.warn(`[AgentBrowser] Could not close context: ${e.message}`);
+      }
+    }
+
+    // Ensure browser is running (so next launch() won't fail), but do NOT create a context yet.
+    // This ensures the next call to navigate() creates a fresh context *without* loading storage.
+    if (!this.browser) {
+      await this.launch({ launchOnly: true });
+    }
   }
 
   /**
    * Load cookies/localStorage/sessionStorage from disk into a fresh context.
    * Closes any existing context/page.
+   * Updates `this.currentStoragePath`.
    * @param {string} path - Input path (e.g., `./state.json`)
    * @returns {Promise<{loaded: true, path: string}>}
    */
   async loadStorageState(path) {
-    if (!this.browser) {
-      await this.launch();
-    }
-
+    this.currentStoragePath = path;
     if (this.context) {
       await this.context.close();
       this.context = null;
       this.page = null;
     }
 
-    await this._createContext(path);
+    // Ensure browser is ready (reconnect if crashed)
+    if (!this.browser) {
+      await this.launch();  //will use modified currentStoragePath
+    }
+
     this.scrollY = 0;
     this.lastResult = null;
+
     return { loaded: true, path };
   }
 
@@ -573,9 +670,19 @@ class AgentBrowser {
 
   /**
    * Close the browser, cleanup contexts and pages.
+   * ✅ Auto-saves storage state before exiting.
    * Safe to call multiple times.
    */
   async close() {
+    // Final auto-save before closing
+    if (this.context && this.currentStoragePath) {
+      try {
+        await this.saveStorageState(this.currentStoragePath);
+      } catch (err) {
+        console.warn(`[AgentBrowser] Final storage save failed: ${err.message}`);
+      }
+    }
+
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
