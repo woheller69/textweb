@@ -638,16 +638,33 @@ async function renderMarkdown(page, options = {}) {
       // Track processed div-based tables to avoid duplicates
       const processedDivTables = new Set();
 
-      // ❌ DO NOT include td, th in containers — tables are parsed separately
+      // ── Table detection selectors (extensible for multiple frameworks) ─────────
+      const TABLE_SELECTORS = [
+        '.tableContainer'  // Yahoo Finance (start here; add more as needed)
+      ];
+
+      // Build a single selector string for querySelectorAll
+      const tableSelectorStr = TABLE_SELECTORS.join(', ');
+
+      // ❌ Exclude elements inside semantic <table> OR any div-based table container
       const allContainers = Array.from(document.querySelectorAll('p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6'))
-        .filter(el => !el.closest('table') && !el.closest('.tableContainer'));
+        .filter(el => {
+          // Exclude semantic tables
+          if (el.closest('table')) return false;
+
+          // Exclude div-based tables (check each selector)
+          for (const selector of TABLE_SELECTORS) {
+            if (el.closest(selector)) return false;
+          }
+          return true;
+        });
 
       const filteredContainers = allContainers.filter(c =>
         !allContainers.some(o => o !== c && o.contains(c))
       );
 
-      // ── Process div-based tables (Yahoo Finance style) ────────────────────────
-      const allDivTableContainers = Array.from(document.querySelectorAll('.tableContainer'))
+      // ── Process div-based tables (multi-selector support) ────────────────────────
+      const allDivTableContainers = Array.from(document.querySelectorAll(tableSelectorStr))
         .filter(tc => hasPointerEvents(tc));
 
       for (const tableContainer of allDivTableContainers) {
