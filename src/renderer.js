@@ -200,6 +200,53 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
+       * Parse div-based table structure (Yahoo Finance style) into headers and rows.
+       * Handles .tableContainer with .tableHeader/.tableBody and .column cells.
+       * @param {Element} tableContainer - The .tableContainer DOM element
+       * @returns {{ headers: string[], rows: CellData[][] }} Parsed table data compatible with renderTableLLMOptimized
+       */
+      function parseDivTableStructure(tableContainer) {
+        const headers = [];
+        const rows = [];
+
+        // Extract header row from .tableHeader .row
+        const headerRow = tableContainer.querySelector('.tableHeader .row');
+        if (headerRow) {
+          Array.from(headerRow.querySelectorAll('.column')).forEach(cell => {
+            headers.push(decodeHTML(cell.innerText.trim()));
+          });
+        }
+
+        // Extract body rows from .tableBody
+        const tableBody = tableContainer.querySelector('.tableBody');
+        if (tableBody) {
+          const bodyRows = Array.from(tableBody.querySelectorAll('.row'));
+
+          bodyRows.forEach(rowEl => {
+            const cells = Array.from(rowEl.querySelectorAll('.column'));
+            const rowData = cells.map(cell => {
+              const text = decodeHTML(cell.innerText.trim());
+              const interactives = Array.from(
+                cell.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"]')
+              ).filter(el => hasPointerEvents(el) && isInteractiveElement(el));
+
+              return {
+                text,
+                interactives,
+                colSpan: 1, // div-tables rarely use colspan/rowspan, but structure matches semantic tables
+                rowSpan: 1,
+                selector: buildSimpleSelector(cell),
+                tag: 'div'
+              };
+            });
+            rows.push(rowData);
+          });
+        }
+
+        return { headers, rows };
+      }
+
+      /**
        * Parse HTML table structure into headers and rows with interactive references.
        * Handles colspan/rowspan and deduplication of spanning cells.
        * @param {Element} table - Table DOM element
@@ -333,6 +380,69 @@ async function renderMarkdown(page, options = {}) {
         });
         return values.size === 0 ? 'left' : (values.size === 1 && values.has('numeric') ? 'right' : 'left');
       }
+
+      /**
+       * * Renders table data into a compact Markdown table optimized for LLM consumption.
+       *  * Uses symmetric delimiters ( | ) for clarity while minimizing token usage.
+       *
+       * Unlike human-focused renderers, this function minimizes token usage by:
+       * 1. Removing trailing whitespace (no `padEnd` on cells).
+       * 2. Using a fixed minimum separator length (3 dashes) instead of dynamic column width.
+       * 3. Simplifying alignment logic to standard `---` (left-aligned) unless specific types require it.
+       *
+       * @param {{ headers: string[], rows: CellData[][] }} tableData - Table structure from parseTableStructure
+       * @returns {string} Markdown table string
+       */
+      function renderTableLLMOptimized(tableData) {
+        const { headers, rows } = tableData;
+
+        // Quick check for empty data
+        if (!headers.length && (!rows || !rows.length)) return '';
+
+        // Determine the number of columns based on the longest row
+        const cols = Math.max(
+          headers.length,
+          rows ? Math.max(...rows.map(r => r.length || 0)) : 0
+        );
+
+        // Ensure headers have enough columns
+        while (headers.length < cols) headers.push('');
+
+        // Ensure rows have enough columns and fill with default objects if necessary
+        // (Preserving the structure of your original logic for safety)
+        rows.forEach(row => {
+          while (row.length < cols) {
+            row.push({ text: '', interactives: [], colSpan: 1, rowSpan: 1 });
+          }
+        });
+
+        // Calculate minimum width for each column (just enough to fit content)
+        const colWidths = new Array(cols).fill(3); // Min width of 3 for separator
+
+        headers.forEach((h, i) => colWidths[i] = Math.max(colWidths[i], h.length));
+        rows.forEach(row => {
+          row.forEach((cell, i) => {
+            colWidths[i] = Math.max(colWidths[i], (cell.text || '').length);
+          });
+        });
+
+        // 1. Header Row: No trailing spaces
+        const hRow = '| ' + headers.map((h, i) => h).join(' | ') + ' |';
+
+        // 2. Separator Row: Fixed 3 dashes for all columns to save tokens
+        // (No dynamic alignment logic unless explicitly required)
+        const sepRow = '| ' + colWidths.map(() => '---').join(' | ') + ' |';
+
+        // 3. Body Rows: No trailing spaces, escape special characters
+        const bodyRows = rows.map(row =>
+          '| ' + row.map((cell, i) => escapeForLLM(cell.text || '')).join(' | ') + ' |'
+        );
+
+        // Return with standard Markdown spacing
+        return `\n\n${hRow}\n${sepRow}\n${bodyRows.join('\n')}\n`;
+      }
+
+
 
       /**
        * Render parsed table data to Markdown with alignment and escaping.
@@ -525,13 +635,69 @@ async function renderMarkdown(page, options = {}) {
       const results = [];
       const usedInteractives = new Set();
 
+      // Track processed div-based tables to avoid duplicates
+      const processedDivTables = new Set();
+
       // ❌ DO NOT include td, th in containers — tables are parsed separately
       const allContainers = Array.from(document.querySelectorAll('p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6'))
-        .filter(el => !el.closest('table'));  // ← NEW: Exclude elements inside tables
+        .filter(el => !el.closest('table') && !el.closest('.tableContainer'));
 
       const filteredContainers = allContainers.filter(c =>
         !allContainers.some(o => o !== c && o.contains(c))
       );
+
+      // ── Process div-based tables (Yahoo Finance style) ────────────────────────
+      const allDivTableContainers = Array.from(document.querySelectorAll('.tableContainer'))
+        .filter(tc => hasPointerEvents(tc));
+
+      for (const tableContainer of allDivTableContainers) {
+        if (processedDivTables.has(tableContainer)) continue;
+        processedDivTables.add(tableContainer);
+
+        const rect = tableContainer.getBoundingClientRect();
+        const top = rect.top + window.scrollY;
+
+        // Viewport filtering
+        if (viewportHeight !== null && (top < scrollY || top > scrollY + viewportHeight)) continue;
+
+        // Parse the div-table structure
+        const tableData = parseDivTableStructure(tableContainer);
+        if (!tableData.headers.length && !tableData.rows.length) continue;
+
+        // ✅ Embed interactive references inline in cells (same logic as semantic tables)
+        for (const row of tableData.rows) {
+          for (const cell of row) {
+            if (cell?.interactives?.length > 0) {
+              let text = cell.text;
+              for (const rawEl of cell.interactives) {
+                const item = allInteractives.find(i => i.el === rawEl);
+                if (item) {
+                  ({ text, refId } = embedInteractiveRef(text, item, elementMap, refId, { fallbackAppend: true }));
+                }
+              }
+              cell.text = text.replace(/@@REF_(\d+)@@/g, '[$1]');
+            }
+          }
+        }
+
+        // Mark contained interactives as used
+        const tableInteractives = allInteractives.filter(item =>
+          tableContainer.contains(item.el) && !usedInteractives.has(item.el)
+        );
+        tableInteractives.forEach(item => usedInteractives.add(item.el));
+
+        // Add to results as a table-type entry
+        results.push({
+          type: 'table',
+          y: top,
+          data: tableData,
+          interactives: tableInteractives,
+          selector: buildSimpleSelector(tableContainer),
+          caption: tableContainer.querySelector('.subText')?.innerText.trim() ||
+                   tableContainer.querySelector('.currency')?.innerText.trim() || null
+        });
+      }
+// ── End div-table processing ─────────────────────────────────────────────
 
       for (const container of filteredContainers) {
         if (!hasPointerEvents(container)) continue;
@@ -666,7 +832,7 @@ async function renderMarkdown(page, options = {}) {
         }
 
         if (p.type === 'table') {
-          markdown += renderTable(p.data);
+          markdown += renderTableLLMOptimized(p.data);
 
           if (p.caption) markdown += `\n\n*Caption: ${escapeForLLM(p.caption)}*`;
           markdown += '\n\n';
