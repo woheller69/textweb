@@ -46,7 +46,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'The search query (e.g., "tc83.de")' },
+        query: { type: 'string', description: 'The search query (e.g., "Newton)' },
         max_results: {
           type: 'number',
           description: 'Maximum number of results to return (default: 10, max: 20)',
@@ -456,7 +456,7 @@ function formatResult(result) {
     .map(([ref, el]) => `[${ref}] ${el.semantic}: ${el.text || '(no text)'}: ${el.href || "no link"}`)
     .join('\n');
 
-  return `URL: ${result.meta?.url || 'unknown'}\nVisible range (px): ${result.meta?.scrollY ?? 'unknown'} to ${result.meta?.scrollY+result.meta?.viewportHeight || 'unknown'} of ${result.meta?.fullHeight || 'unknown'}\nTitle: ${result.meta?.title || 'unknown'}\nRefs: ${result.meta?.totalRefs || 0}\n\n${result.view}\n\nInteractive elements:\n${refs}`;
+  return `URL: ${result.meta?.url || 'unknown'}\nVisible range (px): ${result.meta?.scrollY ?? 'unknown'} to ${result.meta?.scrollY+result.meta?.renderHeight || 'unknown'} of ${result.meta?.fullHeight || 'unknown'}\nTitle: ${result.meta?.title || 'unknown'}\nRefs: ${result.meta?.totalRefs || 0}\n\n${result.view}\n\nInteractive elements:\n${refs}`;
 }
 
 /**

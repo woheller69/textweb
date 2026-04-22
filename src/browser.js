@@ -10,7 +10,9 @@ const path = require('path');
 // Register the stealth plugin globally
 chromium.use(StealthPlugin());
 
-const DEFAULT_VIEWPORT = { width: 800, height: 1800 };
+const DEFAULT_VIEWPORT = { width: 800, height: 1000 };
+const DEFAULT_RENDER_HEIGHT = 3000;
+
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 const { renderMarkdown } = require('./renderer');
@@ -245,38 +247,48 @@ class AgentBrowser {
   }
 
   /**
-   * Capture and render the current viewport state.
+   * Capture and render the current page between scrollY and scrollY+renderHeight.
    * Updates `scrollY`, then invokes `renderMarkdown`.
    * ✅ Auto-saves storage state to `currentStoragePath` *after* rendering (if enabled).
    * @returns {Promise<Object>} Render result: `{ view, elements, meta }`
    */
   async snapshot() {
     if (!this.page) throw new Error('No page open. Call navigate() first.');
-    //TODO: make an option for this
+    //TODO: make an option for this! This may also remove reference links tied to the selector
     // ✅ Remove ALL images and videos after page settles
-    await this.page.evaluate(() => {
-      document.querySelectorAll(
-        'img, video, picture, source, canvas, .aj-video-player, .video-page, .video-js, .live-stream-widget, .responsive-image'
-      ).forEach(el => el.remove());
-    });
+    await this.page.evaluate(() => {document.querySelectorAll('img, video, picture, source, canvas, .aj-video-player, .video-page, .video-js, .live-stream-widget, .responsive-image').forEach(el => el.remove());});
 
     this.scrollY = await this.page.evaluate(() => window.scrollY);  // sync with browser window
 
     this.lastResult = await renderMarkdown(this.page, {
       scrollY: this.scrollY,
-      viewportHeight: DEFAULT_VIEWPORT.height,
+      renderHeight: DEFAULT_RENDER_HEIGHT,
     });
 
-    //console.log('\n📊 Meta Summary:\n');
-    //console.log(`  URL: ${this.lastResult.meta.url}`);
-    //console.log(`  Title: ${this.lastResult.meta.title}`);
-    //console.log(`  Scroll Y: ${this.lastResult.meta.scrollY}px`);
-    //console.log(`  Viewport Height: ${this.lastResult.meta.viewportHeight}px`);
-    //console.log(`  Full Height: ${this.lastResult.meta.fullHeight}px`);
-    //console.log(`  Total References: ${this.lastResult.meta.totalRefs}`);
+    console.log('\n📊 Meta Summary:\n');
+    console.log(`  URL: ${this.lastResult.meta.url}`);
+    console.log(`  Title: ${this.lastResult.meta.title}`);
+    console.log(`  Scroll Y: ${this.lastResult.meta.scrollY}px`);
+    console.log(`  Render Height: ${this.lastResult.meta.renderHeight}px`);
+    console.log(`  Full Height: ${this.lastResult.meta.fullHeight}px`);
+    console.log(`  Total References: ${this.lastResult.meta.totalRefs}`);
 
     return this.lastResult;
   }
+
+    /**
+   * Helper: Detect if element is a checkbox
+   * @param {Object} el - Element metadata
+   * @returns {boolean}
+   */
+  _isCheckbox(el) {
+      return (
+          el.tag?.toLowerCase() === 'input' && el.type?.toLowerCase() === 'checkbox' ||
+          el.semantic?.toLowerCase() === 'checkbox' ||
+          el.role?.toLowerCase() === 'checkbox' ||
+          el.selector?.includes('type="checkbox"')
+      );
+    }
 
   /**
    * Check whether a given href is a valid, navigable HTTP/HTTPS URL.
@@ -304,10 +316,15 @@ class AgentBrowser {
   async click(ref, options = {}) {
     const el = this._getElement(ref); // Already validates existence
 
-    // 🎯 1. If it's a valid absolute URL, navigate directly (bypasses viewport issues)
+    // 🎯 1. If it's a valid absolute URL, navigate directly
     if (this._isNavigableUrl(el.href)) {
       console.debug(`🔗 Navigating for ref=${ref}: ${el.href}`);
       return await this.navigate(el.href, options);
+    }
+
+    if (this._isCheckbox(el)){
+      console.debug('Checkboxes are not supported');
+      return await this.snapshot();
     }
 
     // 🖱️ 2. Fallback to click
@@ -439,15 +456,15 @@ class AgentBrowser {
   }
 
   /**
-   * Scroll the viewport vertically.
+   * Scroll the rendered range vertically.
    * @param {'up'|'down'|'top'} direction - Scroll direction
-   * @param {number} [amount=1] - Number of viewport heights to scroll
+   * @param {number} [amount=1] - Number of renderHeights to scroll
    * @returns {Promise<Object>} Updated render result
    */
   async scroll(direction = 'down', amount = 1) {
-    // Scroll by one "page" = viewport height
+    // Scroll by one "page" = renderHeight
 
-    const delta = DEFAULT_VIEWPORT.height * amount;
+    const delta = DEFAULT_RENDER_HEIGHT * amount;
     if (direction === 'down') {
       this.scrollY += delta;
     } else if (direction === 'up') {

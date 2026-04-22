@@ -8,18 +8,18 @@
  * @param {import('playwright').Page} page - Playwright Page instance
  * @param {Object} options - Rendering options
  * @param {number} [options.scrollY=0] - Vertical scroll position (in viewport pixels)
- * @param {number|null} [options.viewportHeight=null] - Current viewport height; null means full page
+ * @param {number|null} [options.renderHeight=null] - Current render height; null means full page
  * @returns {Promise<Object>} Render result:
  *   - view {string} – Markdown-formatted content
  *   - elements {Object<string,InteractiveElement>} – Map of interactive elements keyed by ref ID
- *   - meta {Object} – Metadata: scrollY, viewportHeight, fullHeight, totalRefs, url, title
+ *   - meta {Object} – Metadata: scrollY, renderHeight, fullHeight, totalRefs, url, title
  */
 
 async function renderMarkdown(page, options = {}) {
-  const { scrollY = 0, viewportHeight = null } = options;
+  const { scrollY = 0, renderHeight = null } = options;
 
   const result = await page.evaluate(
-    ({ scrollY, viewportHeight }) => {
+    ({ scrollY, renderHeight }) => {
       // ─── ALL HELPER FUNCTIONS (browser context) ─────────────────────────────
 
       /**
@@ -449,7 +449,7 @@ async function renderMarkdown(page, options = {}) {
        * @param {{ headers: string[], rows: CellData[][] }} tableData - Table structure from parseTableStructure
        * @returns {string} Markdown table string
        */
-      function renderTable(tableData) {
+      function renderTableHumanOptimized(tableData) {
         const { headers, rows } = tableData;
         if (!headers.length && !rows.length) return '';
 
@@ -594,7 +594,7 @@ async function renderMarkdown(page, options = {}) {
 
         const rect = el.getBoundingClientRect();
         const top = rect.top + window.scrollY;
-        if (viewportHeight !== null && (top < scrollY || top > scrollY + viewportHeight)) return;
+        if (renderHeight !== null && (top < scrollY || top > scrollY + renderHeight)) return;
 
         let text = '';
         if (el.tagName === 'INPUT') {
@@ -674,8 +674,8 @@ async function renderMarkdown(page, options = {}) {
         const rect = tableContainer.getBoundingClientRect();
         const top = rect.top + window.scrollY;
 
-        // Viewport filtering
-        if (viewportHeight !== null && (top < scrollY || top > scrollY + viewportHeight)) continue;
+        // Rendered range filtering
+        if (renderHeight !== null && (top < scrollY || top > scrollY + renderHeight)) continue;
 
         // Parse the div-table structure
         const tableData = parseDivTableStructure(tableContainer);
@@ -726,11 +726,11 @@ async function renderMarkdown(page, options = {}) {
         const bottom = rect.bottom + window.scrollY;
         const height = rect.height;
 
-        // Skip if entirely outside viewport
-        if (viewportHeight !== null && (bottom < scrollY || top > scrollY + viewportHeight)) continue;
+        // Skip if entirely outside rendered range
+        if (renderHeight !== null && (bottom < scrollY || top > scrollY + renderHeight)) continue;
 
-        // ✅ NEW: Skip containers that are significantly taller than viewport (likely layout wrappers)
-        if (viewportHeight !== null && height > viewportHeight * 5) continue;
+        // ✅ NEW: Skip containers that are significantly taller than rendered range (likely layout wrappers)
+        if (renderHeight !== null && height > renderHeight * 5) continue;
 
         const containerInteractives = allInteractives.filter(item =>
           container.contains(item.el) && !usedInteractives.has(item.el)
@@ -759,7 +759,7 @@ async function renderMarkdown(page, options = {}) {
         }
         if (!hasPointerEvents(table)) continue;
         const top = table.getBoundingClientRect().top + window.scrollY;
-        if (viewportHeight !== null && (top < scrollY || top > scrollY + viewportHeight)) continue;
+        if (renderHeight !== null && (top < scrollY || top > scrollY + renderHeight)) continue;
 
         const tableData = parseTableStructure(table);
 
@@ -915,7 +915,7 @@ async function renderMarkdown(page, options = {}) {
         elements: elementMap,
         meta: {
           scrollY,
-          viewportHeight,
+          renderHeight,
           fullHeight: document.documentElement.scrollHeight,
           totalRefs: refId - 1,
           url: location.href,
@@ -923,7 +923,7 @@ async function renderMarkdown(page, options = {}) {
         }
       };
     },
-    { scrollY, viewportHeight }
+    { scrollY, renderHeight }
   );
 
   return result;
