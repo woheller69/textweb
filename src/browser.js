@@ -350,6 +350,7 @@ class AgentBrowser {
       });
 
       await this._settle();
+      await this.page.waitForTimeout(300); // Let layout/animations settle
     }, options);
 
     return await this.snapshot();

@@ -529,7 +529,8 @@ async function renderMarkdown(page, options = {}) {
         const safeText = escapedItemText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
         // Boundary-aware regex (matches word + common delimiters)
-        const regex = new RegExp(`(^|\\s|[(\\[])(\\b${safeText}\\b)(\\s|[.:;,!?)\\]]|$)`, 'i');
+        // ✅ Fixed: Removed \b boundaries. Expanded delimiter set to handle markdown escaping & HTML tags. The original \b (word boundary) fails in markdown/HTML contexts
+        const regex = new RegExp(`(^|[\\s(\\[<\\*\\_])(${safeText})([\\s.:;,!?)\\]>\\*\\_]|$)`, 'i');
         const match = targetText.match(regex);
 
         if (match) {
