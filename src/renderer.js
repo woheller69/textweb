@@ -910,13 +910,15 @@ async function renderMarkdown(page, options = {}) {
         if (cleaned) markdown += cleaned + '\n\n';
       }
 
+      const fullHeight = document.documentElement.scrollHeight;
+
       return {
         view: markdown.trim(),
         elements: elementMap,
         meta: {
           scrollY,
-          renderHeight,
-          fullHeight: document.documentElement.scrollHeight,
+          renderHeight: renderHeight ?? fullHeight,
+          fullHeight,
           totalRefs: refId - 1,
           url: location.href,
           title: document.title
