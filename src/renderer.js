@@ -648,11 +648,12 @@ async function renderMarkdown(page, options = {}) {
       const tableSelectorStr = TABLE_SELECTORS.join(', ');
 
       // ❌ Exclude elements inside semantic <table> OR any div-based table container
-      const allContainers = Array.from(document.querySelectorAll('p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6'))
+      const allContainers = Array.from(document.querySelectorAll('p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, div.row'))
         .filter(el => {
           // Exclude semantic tables
           if (el.closest('table')) return false;
-
+          // ✅ Skip wrappers that contain other rows (prevents concatenation & duplicates)
+          if (el.querySelector('div.row')) return false;
           // Exclude div-based tables (check each selector)
           for (const selector of TABLE_SELECTORS) {
             if (el.closest(selector)) return false;
