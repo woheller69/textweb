@@ -22,6 +22,15 @@ async function renderMarkdown(page, options = {}) {
     ({ scrollY, renderHeight }) => {
       // ─── ALL HELPER FUNCTIONS (browser context) ─────────────────────────────
 
+      const INCLUDED_SELECTORS = 'p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, div.row';
+
+      const EXCLUDED_SELECTORS = [  //Exclude these, if they are inside INCLUDED_SELECTORS
+          '.devsite-nav-item'              // Ignore devsite navigation items (Android Developer pages)
+      ];
+      const TABLE_SELECTORS = [
+        '.tableContainer'  // Yahoo Finance (start here; add more as needed)
+      ];
+      
       /**
        * Decode HTML entities safely (in-browser)
        * @param {string} str - Input string potentially containing HTML entities
@@ -509,6 +518,7 @@ async function renderMarkdown(page, options = {}) {
           if (text) parts.push(text);
         }
         return parts.join(' ').trim();
+        //return el.innerText?.trim();
       }
 
       /**
@@ -620,6 +630,9 @@ async function renderMarkdown(page, options = {}) {
       document.querySelectorAll(
         'a[href], button, input, select, textarea, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"])'
       ).forEach(el => {
+        for (const selector of EXCLUDED_SELECTORS) {
+            if (el.closest(selector)) return;
+        }
         if (!hasPointerEvents(el) || !isInteractiveElement(el)) return;
 
         const rect = el.getBoundingClientRect();
@@ -668,17 +681,12 @@ async function renderMarkdown(page, options = {}) {
       // Track processed div-based tables to avoid duplicates
       const processedDivTables = new Set();
 
-      // ── Table detection selectors (extensible for multiple frameworks) ─────────
-      const TABLE_SELECTORS = [
-        '.tableContainer'  // Yahoo Finance (start here; add more as needed)
-      ];
-
-      // Build a single selector string for querySelectorAll
-      const tableSelectorStr = TABLE_SELECTORS.join(', ');
-
       // ❌ Exclude elements inside semantic <table> OR any div-based table container
-      const allContainers = Array.from(document.querySelectorAll('p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, div.row'))
+      const allContainers = Array.from(document.querySelectorAll(INCLUDED_SELECTORS))
         .filter(el => {
+          for (const selector of EXCLUDED_SELECTORS) {
+            if (el.closest(selector)) return false;
+          }
           // Exclude semantic tables
           if (el.closest('table')) return false;
           // ✅ Skip wrappers that contain other rows (prevents concatenation & duplicates)
@@ -695,7 +703,7 @@ async function renderMarkdown(page, options = {}) {
       );
 
       // ── Process div-based tables (multi-selector support) ────────────────────────
-      const allDivTableContainers = Array.from(document.querySelectorAll(tableSelectorStr))
+      const allDivTableContainers = Array.from(document.querySelectorAll(TABLE_SELECTORS.join(', ')))
         .filter(tc => hasPointerEvents(tc));
 
       for (const tableContainer of allDivTableContainers) {
