@@ -484,6 +484,7 @@ async function renderMarkdown(page, options = {}) {
       /**
        * Extract text from an element while preserving spaces between child text nodes.
        * Prevents concatenation like "EUR274" → "EUR 274" with el.innerText?.trim();
+       * Exclude invisible content
        * @param {Element} el - DOM element
        * @returns {string} Text with guaranteed spaces between node boundaries
        */
@@ -492,6 +493,18 @@ async function renderMarkdown(page, options = {}) {
         const parts = [];
         let node;
         while ((node = walker.nextNode())) {
+          // ✅ Skip text nodes whose parent is visually hidden
+          const parent = node.parentElement;
+          if (!parent) continue;
+          const style = getComputedStyle(parent);
+          if (
+            style.display === 'none' ||
+            style.visibility === 'hidden' ||
+            parseFloat(style.opacity) === 0 ||
+            parent.offsetParent === null
+          ) {
+            continue;
+          }
           const text = node.textContent.trim();
           if (text) parts.push(text);
         }
