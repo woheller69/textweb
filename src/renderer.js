@@ -213,7 +213,7 @@ async function renderMarkdown(page, options = {}) {
         const headerRow = tableContainer.querySelector('.tableHeader .row');
         if (headerRow) {
           Array.from(headerRow.querySelectorAll('.column')).forEach(cell => {
-            headers.push(decodeHTML(cell.innerText.trim()));
+            headers.push(decodeHTML(extractTextWithSpaces(cell)));
           });
         }
 
@@ -225,7 +225,7 @@ async function renderMarkdown(page, options = {}) {
           bodyRows.forEach(rowEl => {
             const cells = Array.from(rowEl.querySelectorAll('.column'));
             const rowData = cells.map(cell => {
-              const text = decodeHTML(cell.innerText.trim());
+              const text = decodeHTML(extractTextWithSpaces(cell));
               const interactives = Array.from(
                 cell.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"]')
               ).filter(el => hasPointerEvents(el) && isInteractiveElement(el));
@@ -265,7 +265,7 @@ async function renderMarkdown(page, options = {}) {
         if (hasTh) {
           // Use <th> cells as headers
           firstRow.querySelectorAll('th').forEach(cell => {
-            headers.push(cell.innerText.trim());
+            headers.push(decodeHTML(extractTextWithSpaces(cell)));
           });
         }
         const tbody = table.querySelector('tbody') || table;
@@ -278,7 +278,7 @@ async function renderMarkdown(page, options = {}) {
 
           cols.forEach(cell => {
             const { colspan = 1, rowspan = 1 } = cell;
-            const text = decodeHTML(cell.innerText.trim());
+            const text = decodeHTML(extractTextWithSpaces(cell));
             const interactives = Array.from(
               cell.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"]')
             ).filter(el => hasPointerEvents(el) && isInteractiveElement(el));
@@ -481,6 +481,22 @@ async function renderMarkdown(page, options = {}) {
         return `\n\n${hRow}\n${sepRow}\n${bodyRows.join('\n')}\n`;
       }
 
+      /**
+       * Extract text from an element while preserving spaces between child text nodes.
+       * Prevents concatenation like "EUR274" → "EUR 274" with el.innerText?.trim();
+       * @param {Element} el - DOM element
+       * @returns {string} Text with guaranteed spaces between node boundaries
+       */
+      function extractTextWithSpaces(el) {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+        const parts = [];
+        let node;
+        while ((node = walker.nextNode())) {
+          const text = node.textContent.trim();
+          if (text) parts.push(text);
+        }
+        return parts.join(' ').trim();
+      }
 
       /**
        * Escape text for Markdown (and downstream LLM processing) by escaping special characters.
@@ -720,7 +736,7 @@ async function renderMarkdown(page, options = {}) {
 
       for (const container of filteredContainers) {
         if (!hasPointerEvents(container)) continue;
-        const text = container.innerText?.trim();
+        const text = extractTextWithSpaces(container);
         if (!text) continue;
 
         const rect = container.getBoundingClientRect();
