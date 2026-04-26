@@ -561,7 +561,7 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
-       * Embed an interactive reference into target text using @@REF_n@@ placeholder.
+       * Embed an interactive reference into target text using @@REFn@@ placeholder.
        * Tries regex match first, then optionally appends reference as fallback.
        * Updates the element map with the new entry.
        * @param {string} targetText - The text to search/modify
@@ -583,7 +583,7 @@ async function renderMarkdown(page, options = {}) {
 
         const itemText = item.text.trim();
         const ref = refId++;
-        const placeholder = `@@REF_${ref}@@`;
+        const placeholder = `@@REF${ref}@@`;
 
         elementMap[ref] = createElementMapEntry(ref, item);
 
@@ -605,7 +605,7 @@ async function renderMarkdown(page, options = {}) {
         // No match found
         if (fallbackAppend) {
           // Append reference at end as fallback
-          targetText = `${targetText}[${ref}]`;
+          targetText = `${targetText}@@REF${ref}@@`;
         }
 
         return { text: targetText, refId, ref, matched: false };
@@ -761,7 +761,7 @@ async function renderMarkdown(page, options = {}) {
                   ({ text, refId } = embedInteractiveRef(text, item, elementMap, refId, { fallbackAppend: true }));
                 }
               }
-              cell.text = text.replace(/@@REF_(\d+)@@/g, '[$1]');
+              cell.text = text;
             }
           }
         }
@@ -845,8 +845,7 @@ async function renderMarkdown(page, options = {}) {
                 const item = allInteractives.find(i => i.el === rawEl);
                 ({ text, refId } = embedInteractiveRef(text, item, elementMap, refId, {fallbackAppend: true}));
               }
-              // Final global replace:
-              cell.text = text.replace(/@@REF_(\d+)@@/g, '[$1]');
+              cell.text = text;
             }
           }
         }
@@ -938,9 +937,9 @@ async function renderMarkdown(page, options = {}) {
             const ref = refId++;
             elementMap[ref] = createElementMapEntry(ref, item);
 
-            let display = `${item.text}[${ref}]`;
+            let display = `${item.text}@@REF${ref}@@`;
             if (item.tag === 'input' && (item.type === 'submit' || item.type === 'button')) {
-              display = `[${item.text}][${ref}]`;
+              display = `[${item.text}]@@REF${ref}@@`;
             }
             markdown += `${display}\n\n`;
           }
@@ -956,8 +955,6 @@ async function renderMarkdown(page, options = {}) {
           for (const item of p.interactives) {
             ({ text, refId } = embedInteractiveRef(text, item, elementMap, refId));
           }
-          // Final global replace:
-          text = text.replace(/@@REF_(\d+)@@/g, '[$1]');
 
           // ── Append unmatched form field refs (inputs, buttons, selects) ──
           if (p.interactives.length > 0) {
@@ -974,7 +971,7 @@ async function renderMarkdown(page, options = {}) {
               )?.[0];
 
               if (ref && !embeddedRefs.has(parseInt(ref)) && FORM_TAGS.includes(item.tag)) {
-                text += ` ${item.text}[${ref}] `;
+                text += ` ${item.text}@@REF${ref}@@ `;
               }
             }
           }
@@ -983,6 +980,9 @@ async function renderMarkdown(page, options = {}) {
         const cleaned = text.replace(/\s+/g, ' ').trim();
         if (cleaned) markdown += cleaned + '\n\n';
       }
+
+      // Final global replace for embedded references:
+      markdown = markdown.replace(/@@REF(\d+)@@/g, '<$1>');
 
       const fullHeight = document.documentElement.scrollHeight;
 

@@ -60,7 +60,7 @@ const TOOLS = [
   },
   {
     name: 'textweb_navigate',
-    description: 'Navigate to a URL and render the page as a markdown text. Interactive elements are annotated with [ref] numbers for clicking/typing. Returns the text as markdown, element map, and page metadata. Use this as your primary way to view web pages. IMPORTANT: The initial view is ~1800px visible. Use textweb_scroll tool to get more.',
+    description: 'Navigate to a URL and render the page as a markdown text. Interactive elements are annotated with <ref> numbers for clicking/typing. Returns the text as markdown, element map, and page metadata. Use this as your primary way to view web pages. IMPORTANT: The initial view is ~1800px visible. Use textweb_scroll tool to get more.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -88,7 +88,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        ref: { type: 'number', description: 'Element reference number from the markdown text (e.g., 3 for [3])' },
+        ref: { type: 'number', description: 'Element reference number from the markdown text (e.g., 3 for <3>)' },
         session_id: { type: 'string', description: SESSION_NOTE },
         retries: { type: 'number', description: 'Retry attempts for flaky transitions' },
         retry_delay_ms: { type: 'number', description: 'Delay between retries in ms' },
@@ -453,7 +453,7 @@ async function getBrowser(args = {}) {
  */
 function formatResult(result) {
   const refs = Object.entries(result.elements || {})
-    .map(([ref, el]) => `[${ref}] ${el.semantic}: ${el.text || '(no text)'}: ${el.href || "no link"}`)
+    .map(([ref, el]) => `<${ref}> ${el.semantic}: ${el.text || '(no text)'}: ${el.href || "no link"}`)
     .join('\n');
 
   return `URL: ${result.meta?.url || 'unknown'}\nVisible range (px): ${result.meta?.scrollY ?? 'unknown'} to ${result.meta?.scrollY+result.meta?.renderHeight || 'unknown'} of ${result.meta?.fullHeight || 'unknown'}\nTitle: ${result.meta?.title || 'unknown'}\nRefs: ${result.meta?.totalRefs || 0}\n\n${result.view}\n\nInteractive elements:\n${refs}`;
