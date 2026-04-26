@@ -1,5 +1,5 @@
 /**
- * TextWeb Markdown Renderer v2.2 — Fully browser-safe
+ * TextWeb Markdown Renderer v2.3 — Fully browser-safe with Synchronous Logging
  * Renders page to Markdown + element map entirely in browser context.
  */
 
@@ -13,6 +13,7 @@
  *   - view {string} – Markdown-formatted content
  *   - elements {Object<string,InteractiveElement>} – Map of interactive elements keyed by ref ID
  *   - meta {Object} – Metadata: scrollY, renderHeight, fullHeight, totalRefs, url, title
+ *   - logs {string} – Collected rendering logs
  */
 
 async function renderMarkdown(page, options = {}) {
@@ -20,6 +21,25 @@ async function renderMarkdown(page, options = {}) {
 
   const result = await page.evaluate(
     ({ scrollY, renderHeight }) => {
+      // ─── LOGGING SYSTEM ─────────────────────────────────────────────────────
+      // Collect logs in an array. We track the index to ensure correct order.
+      const browserLogs = [];
+      let logIndex = 0;
+
+      /**
+       * Synchronous logging function for browser context.
+       * @param {...any} args - Arguments to log
+       */
+      function renderLog(...args) {
+        const message = args.map(arg =>
+          typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+        ).join(' ');
+
+        // Append to logs string with newline prefix
+        browserLogs.push(`[${logIndex++}] ${message}`);
+      }
+      // ──────────────────────────────────────────────────────────────────────────
+
       // ─── ALL HELPER FUNCTIONS (browser context) ─────────────────────────────
 
       const INCLUDED_SELECTORS = 'p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, div.row';
@@ -30,7 +50,9 @@ async function renderMarkdown(page, options = {}) {
       const TABLE_SELECTORS = [
         '.tableContainer'  // Yahoo Finance (start here; add more as needed)
       ];
-      
+
+      renderLog('Start render process', { scrollY, renderHeight });
+
       /**
        * Decode HTML entities safely (in-browser)
        * @param {string} str - Input string potentially containing HTML entities
@@ -215,6 +237,7 @@ async function renderMarkdown(page, options = {}) {
        * @returns {{ headers: string[], rows: CellData[][] }} Parsed table data compatible with renderTableLLMOptimized
        */
       function parseDivTableStructure(tableContainer) {
+        renderLog('Parsing div table structure', tableContainer.tagName);
         const headers = [];
         const rows = [];
 
@@ -262,6 +285,7 @@ async function renderMarkdown(page, options = {}) {
        * @returns {{ headers: string[], rows: CellData[][] }} Parsed table data
        */
       function parseTableStructure(table) {
+        renderLog('Parsing semantic table structure', table.tagName);
         const headers = [];
         const rows = [];
 
@@ -623,9 +647,12 @@ async function renderMarkdown(page, options = {}) {
       }
 
       // ─── MAIN EXTRACT + RENDER LOGIC ──────────────────────────────────────────
+      renderLog('Beginning DOM Extraction');
+
       let refId = 1;
       const elementMap = {};
       // 1. Collect interactives
+      renderLog('Scanning interactive elements...');
       const allInteractives = [];
       document.querySelectorAll(
         'a[href], button, input, select, textarea, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"])'
@@ -674,6 +701,8 @@ async function renderMarkdown(page, options = {}) {
         });
       });
 
+      renderLog(`Found ${allInteractives.length} interactive elements`);
+
       // 2. Collect containers + tables + orphans
       const results = [];
       const usedInteractives = new Set();
@@ -702,7 +731,8 @@ async function renderMarkdown(page, options = {}) {
         !allContainers.some(o => o !== c && o.contains(c))
       );
 
-      // ── Process div-based tables (multi-selector support) ────────────────────────
+      // ── Process div-based tables ────────────────────────────────────────────────
+      renderLog('Processing DIV Tables');
       const allDivTableContainers = Array.from(document.querySelectorAll(TABLE_SELECTORS.join(', ')))
         .filter(tc => hasPointerEvents(tc));
 
@@ -754,6 +784,7 @@ async function renderMarkdown(page, options = {}) {
         });
       }
 // ── End div-table processing ─────────────────────────────────────────────
+      renderLog(`Found ${results.length} tables so far`);
 
       for (const container of filteredContainers) {
         if (!hasPointerEvents(container)) continue;
@@ -787,7 +818,8 @@ async function renderMarkdown(page, options = {}) {
         });
       }
 
-      // Tables
+      // Semantic Tables
+      renderLog('Processing Semantic Tables');
       const allTables = Array.from(document.querySelectorAll('table'));
       for (const table of allTables) {
         // Do not render layout tables like on Hacker News
@@ -835,6 +867,7 @@ async function renderMarkdown(page, options = {}) {
       }
 
       // Orphans
+      renderLog('Processing Orphan Elements');
       for (const item of allInteractives) {
         if (!usedInteractives.has(item.el)) {
           const parentForm = item.el.closest('form');
@@ -853,6 +886,7 @@ async function renderMarkdown(page, options = {}) {
       }
 
       // Deduplicate, but preserve all tables
+      renderLog('Deduplicating results');
       const unique = [];
       for (const item of results) {
         // Always include tables — never deduplicate them
@@ -875,6 +909,7 @@ async function renderMarkdown(page, options = {}) {
         if (!isDuplicate) unique.push(item);
       }
 
+      renderLog(`Rendering Markdown (Total items: ${unique.length})`);
 
       // Final render inside browser
       let markdown = '';
@@ -951,6 +986,8 @@ async function renderMarkdown(page, options = {}) {
 
       const fullHeight = document.documentElement.scrollHeight;
 
+      renderLog('Render complete');
+
       return {
         view: markdown.trim(),
         elements: elementMap,
@@ -961,7 +998,8 @@ async function renderMarkdown(page, options = {}) {
           totalRefs: refId - 1,
           url: location.href,
           title: document.title
-        }
+        },
+        logs: browserLogs.join('\n') // <--- Return the collected logs
       };
     },
     { scrollY, renderHeight }

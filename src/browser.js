@@ -272,6 +272,8 @@ class AgentBrowser {
     console.log(`  Render Height: ${this.lastResult.meta.renderHeight}px`);
     console.log(`  Full Height: ${this.lastResult.meta.fullHeight}px`);
     console.log(`  Total References: ${this.lastResult.meta.totalRefs}`);
+    console.log('\n--- DEBUG LOGS ---');
+    console.log(this.lastResult.logs); // Outputs your collected render log string
 
     return this.lastResult;
   }
