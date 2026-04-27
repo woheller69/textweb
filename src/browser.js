@@ -256,7 +256,7 @@ class AgentBrowser {
     if (!this.page) throw new Error('No page open. Call navigate() first.');
     //TODO: make an option for this! This may also remove reference links tied to the selector
     // ✅ Remove ALL images and videos after page settles
-    await this.page.evaluate(() => {document.querySelectorAll('img, video, picture, source, canvas, .aj-video-player, .video-page, .video-js, .live-stream-widget, .responsive-image').forEach(el => el.remove());});
+    await this.page.evaluate(() => {document.querySelectorAll('img, video, picture, source, canvas, .aj-video-player, .video-page, .video-js, .live-stream-widget, .responsive-image').forEach(el => el.style.maxHeight="10px");});
 
     this.scrollY = await this.page.evaluate(() => window.scrollY);  // sync with browser window
 
