@@ -40,39 +40,39 @@ node cli.js--interactive https://github.com
 
 ```
 Navigating to: https://fdroid.org
-[button][1]
+[button]<1>
 
-https://keepandroidopen.org/[2]
+https://keepandroidopen.org/<2>
 
-[link][3]
+[link]<3>
 
-APPS[4]
+APPS<4>
 
-NEWS[5]
+NEWS<5>
 
-DOCS[6]
+DOCS<6>
 
-ISSUES[7]
+ISSUES<7>
 
-CONTRIBUTE[8]
+CONTRIBUTE<8>
 
-ABOUT[9]
+ABOUT<9>
 
 
 ### Your trusted home for Free and Open Source Mobile Apps
 
-English[10]
+English<10>
 
 
 ### Find Apps
 
-F-Droid is the app distribution ecosystem for Android where your user freedom comes first. Discover our app store, explore the world of free and open source (FOSS) apps and learn[11] about our app distribution tools.
+F-Droid is the app distribution ecosystem for Android where your user freedom comes first. Discover our app store, explore the world of free and open source (FOSS) apps and learn<11> about our app distribution tools.
 
-q[12]
+q<12>
 
-[Search][13]
+[Search]<13>
 
-DOWNLOAD F-DROID[14]
+DOWNLOAD F-DROID<14>
 
 ```
 
