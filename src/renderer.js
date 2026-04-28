@@ -42,7 +42,7 @@ async function renderMarkdown(page, options = {}) {
 
       // ─── ALL HELPER FUNCTIONS (browser context) ─────────────────────────────
 
-      const INCLUDED_SELECTORS = 'p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, div.row';
+      const INCLUDED_SELECTORS = 'p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, div';
 
       const EXCLUDED_SELECTORS = [  //Exclude these, if they are inside INCLUDED_SELECTORS
           '.devsite-nav-item'              // Ignore devsite navigation items (Android Developer pages)
@@ -548,6 +548,8 @@ async function renderMarkdown(page, options = {}) {
       /**
        * Escape text for Markdown (and downstream LLM processing) by escaping special characters.
        * Also decodes HTML entities and normalizes whitespace.
+       * ✅ Do NOT escape `*` '|' or `_`: they're safe in identifiers, URLs, and most text contexts.
+       *  LLMs and Markdown parsers only treat them as formatting when surrounded by whitespace.
        * @param {string} str - Input string
        * @returns {string} Escaped and normalized string
        */
@@ -555,7 +557,7 @@ async function renderMarkdown(page, options = {}) {
         if (!str) return '';
         str = decodeHTML(str);
         return str
-          .replace(/([*_`<>\\|~])/g, '\\$1')
+          .replace(/([`<>\\~])/g, '\\$1')   // changed from .replace(/([*_`<>\\|~])/g, '\\$1')
           .replace(/\u00A0/g, ' ')
           .replace(/\n+/g, ' ');
       }
@@ -718,12 +720,16 @@ async function renderMarkdown(page, options = {}) {
           return false;
         }
 
+        // --- NEW: Exclude div wrappers around tables (prevents duplication) ---
+        if (el.tagName.toLowerCase() === 'div' && el.querySelector('table')) {
+          return false;
+        }
+
         // Existing exclusion filters
         for (const selector of EXCLUDED_SELECTORS) {
           if (el.closest(selector)) return false;
         }
         if (el.closest('table')) return false;
-        if (el.querySelector('div.row')) return false;
         for (const selector of TABLE_SELECTORS) {
           if (el.closest(selector)) return false;
         }
