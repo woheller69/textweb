@@ -710,26 +710,25 @@ async function renderMarkdown(page, options = {}) {
       // Track processed div-based tables to avoid duplicates
       const processedDivTables = new Set();
 
+      const allContainers = Array.from(document.querySelectorAll(INCLUDED_SELECTORS));
       // ❌ Exclude elements inside semantic <table> OR any div-based table container
-      const allContainers = Array.from(document.querySelectorAll(INCLUDED_SELECTORS))
-        .filter(el => {
-          for (const selector of EXCLUDED_SELECTORS) {
-            if (el.closest(selector)) return false;
-          }
-          // Exclude semantic tables
-          if (el.closest('table')) return false;
-          // ✅ Skip wrappers that contain other rows (prevents concatenation & duplicates)
-          if (el.querySelector('div.row')) return false;
-          // Exclude div-based tables (check each selector)
-          for (const selector of TABLE_SELECTORS) {
-            if (el.closest(selector)) return false;
-          }
-          return true;
-        });
+      const filteredContainers = allContainers.filter(el => {
+        // Remove containers that contain OTHER matched elements (keep leaf nodes)
+        if (allContainers.some(o => o !== el && el.contains(o))) {
+          return false;
+        }
 
-      const filteredContainers = allContainers.filter(c =>
-        !allContainers.some(o => o !== c && o.contains(c))
-      );
+        // Existing exclusion filters
+        for (const selector of EXCLUDED_SELECTORS) {
+          if (el.closest(selector)) return false;
+        }
+        if (el.closest('table')) return false;
+        if (el.querySelector('div.row')) return false;
+        for (const selector of TABLE_SELECTORS) {
+          if (el.closest(selector)) return false;
+        }
+        return true;
+      });
 
       // ── Process div-based tables ────────────────────────────────────────────────
       renderLog('Processing DIV Tables');
