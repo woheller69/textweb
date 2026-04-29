@@ -302,11 +302,12 @@ async function renderMarkdown(page, options = {}) {
           });
         }
         const tbody = table.querySelector('tbody') || table;
-        const trs = Array.from(tbody.querySelectorAll('tr'));
+        // Use .children + filter to only parse direct rows/cells (prevents nested table leakage)
+        const trs = Array.from(tbody.children).filter(el => el.tagName === 'TR');
         const cellMap = [];
 
         trs.forEach((tr, rowIndex) => {
-          const cols = Array.from(tr.children);
+          const cols = Array.from(tr.children).filter(el => el.tagName === 'TD' || el.tagName === 'TH');
           let colIndex = 0;
 
           cols.forEach(cell => {
