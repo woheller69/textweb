@@ -391,30 +391,6 @@ async function renderMarkdown(page, options = {}) {
 
         return { headers, rows };
       }
-
-      /**
-       * Determine column alignment based on content type (numeric vs. text).
-       * Used for Markdown table alignment rows.
-       * @param {string[]} headers - Column header names
-       * @param {CellData[][]} rows - Table rows (parsed)
-       * @param {number} colIndex - Index of column to assess
-       * @returns {'left'|'right'} Alignment hint
-       */
-      function getAlignment(headers, rows, colIndex) {
-        const values = new Set();
-        rows.forEach(row => {
-          if (row[colIndex] && row[colIndex].text) {
-            const text = row[colIndex].text.trim().replace(/[,$]/g, '');
-            if (text && !isNaN(Number(text.replace(/[^\d.\-]/g, '')))) {
-              values.add('numeric');
-            } else if (text) {
-              values.add('text');
-            }
-          }
-        });
-        return values.size === 0 ? 'left' : (values.size === 1 && values.has('numeric') ? 'right' : 'left');
-      }
-
       /**
        * * Renders table data into a compact Markdown table optimized for LLM consumption.
        *  * Uses symmetric delimiters ( | ) for clarity while minimizing token usage.
