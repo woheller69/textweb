@@ -42,7 +42,7 @@ async function renderMarkdown(page, options = {}) {
 
       // ─── ALL HELPER FUNCTIONS (browser context) ─────────────────────────────
 
-      const INCLUDED_SELECTORS = 'p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, div, pre';
+      const INCLUDED_SELECTORS = 'p, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, div, pre';
 
       const EXCLUDED_SELECTORS = [  //Exclude these, if they are inside INCLUDED_SELECTORS
           '.devsite-nav-item'              // Ignore devsite navigation items (Android Developer pages)
@@ -743,8 +743,9 @@ async function renderMarkdown(page, options = {}) {
                    tableContainer.querySelector('.currency')?.innerText.trim() || null
         });
       }
-// ── End div-table processing ─────────────────────────────────────────────
       renderLog(`Found ${results.length} tables so far`);
+// ── End div-table processing ─────────────────────────────────────────────
+
 
       for (const container of filteredContainers) {
         if (!hasPointerEvents(container)) continue;
