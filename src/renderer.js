@@ -474,46 +474,6 @@ async function renderMarkdown(page, options = {}) {
         // Return with standard Markdown spacing
         return `\n\n${hRow}\n${sepRow}\n${bodyRows.join('\n')}\n`;
       }
-
-
-
-      /**
-       * Render parsed table data to Markdown with alignment and escaping.
-       * @param {{ headers: string[], rows: CellData[][] }} tableData - Table structure from parseTableStructure
-       * @returns {string} Markdown table string
-       */
-      function renderTableHumanOptimized(tableData) {
-        const { headers, rows } = tableData;
-        if (!headers.length && !rows.length) return '';
-
-        const cols = Math.max(headers.length, rows.length ? Math.max(...rows.map(r => r.length)) : 0);
-        while (headers.length < cols) headers.push('');
-        rows.forEach(row => {
-          while (row.length < cols) row.push({ text: '', interactives: [], colSpan: 1, rowSpan: 1 });
-        });
-
-        const colWidths = new Array(cols).fill(3);
-        headers.forEach((h, i) => colWidths[i] = Math.max(colWidths[i], h.length));
-        rows.forEach(row => {
-          row.forEach((cell, i) => {
-            colWidths[i] = Math.max(colWidths[i], (cell.text || '').length);
-          });
-        });
-
-        const hRow = '| ' + headers.map((h, i) => h.padEnd(colWidths[i])).join(' | ') + ' |';
-        const sepRow = '| ' + colWidths.map((w, i) => {
-          const align = getAlignment(headers, rows, i);
-          if (align === 'right') return ':' + '-'.repeat(w - 1);
-          if (align === 'center') return ':' + '-'.repeat(w - 2) + ':';
-          return '-'.repeat(w);
-        }).join(' | ') + ' |';
-        const bodyRows = rows.map(row =>
-          '| ' + row.map((cell, i) => escapeForLLM(cell.text || '').padEnd(colWidths[i])).join(' | ') + ' |'
-        );
-
-        return `\n\n${hRow}\n${sepRow}\n${bodyRows.join('\n')}\n`;
-      }
-
       /**
        * Extract text from an element while preserving spaces between child text nodes.
        * Prevents concatenation like "EUR274" → "EUR 274" with el.innerText?.trim();
