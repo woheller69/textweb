@@ -42,7 +42,7 @@ async function renderMarkdown(page, options = {}) {
 
       // ─── ALL HELPER FUNCTIONS (browser context) ─────────────────────────────
 
-      const INCLUDED_SELECTORS = 'p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, div';
+      const INCLUDED_SELECTORS = 'p, li, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, div, pre';
 
       const EXCLUDED_SELECTORS = [  //Exclude these, if they are inside INCLUDED_SELECTORS
           '.devsite-nav-item'              // Ignore devsite navigation items (Android Developer pages)
@@ -486,10 +486,14 @@ async function renderMarkdown(page, options = {}) {
         const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
         const parts = [];
         let node;
+        const isPre = el.tagName.toLowerCase() === 'pre';
+
         while ((node = walker.nextNode())) {
           // ✅ Skip text nodes whose parent is visually hidden
           const parent = node.parentElement;
           if (!parent) continue;
+
+          // Skip invisible text (via parent's computed style)
           const style = getComputedStyle(parent);
           if (
             style.display === 'none' ||
@@ -499,11 +503,20 @@ async function renderMarkdown(page, options = {}) {
           ) {
             continue;
           }
-          const text = node.textContent.trim();
-          if (text) parts.push(text);
+
+          const text = node.textContent;
+          if (text) {
+            parts.push(isPre ? text : text.trim());
+          }
         }
-        return parts.join(' ').trim();
-        //return el.innerText?.trim();
+
+        // Join with appropriate spacing
+        return parts.length === 0
+          ? ''
+          : (isPre
+              ? parts.join('') // preserve all newlines/indentation
+              : parts.join(' ').trim() // collapse whitespace for normal text
+            );
       }
 
       /**
@@ -681,9 +694,14 @@ async function renderMarkdown(page, options = {}) {
           return false;
         }
 
-        // --- NEW: Exclude div wrappers around tables (prevents duplication) ---
-        if (el.tagName.toLowerCase() === 'div' && el.querySelector('table')) {
-          return false;
+        // Exclude div wrappers around tables and div-based tables (e.g., .tableContainer)
+        if (el.tagName.toLowerCase() === 'div') {
+          if (el.querySelector('table')) return false;
+          for (const selector of TABLE_SELECTORS) {
+            if (el.querySelector(selector)) {
+              return false;
+            }
+          }
         }
 
         // Existing exclusion filters
@@ -754,8 +772,10 @@ async function renderMarkdown(page, options = {}) {
 
       for (const container of filteredContainers) {
         if (!hasPointerEvents(container)) continue;
+          // 👇 NEW: Detect and mark <pre> elements
+        const isPre = container.tagName.toLowerCase() === 'pre';
         const text = extractTextWithSpaces(container);
-        if (!text) continue;
+        if (!text && !isPre) continue; // allow empty pre if it has interactives? Rare, but okay.
 
         const rect = container.getBoundingClientRect();
         const top = rect.top + window.scrollY;
@@ -781,7 +801,8 @@ async function renderMarkdown(page, options = {}) {
           y: top,
           tag: container.tagName.toLowerCase(),
           isHeading: /^H[1-6]$/.test(container.tagName),
-          headingLevel: container.tagName.match(/^H(\d)$/)?.[1] || null
+          headingLevel: container.tagName.match(/^H(\d)$/)?.[1] || null,
+          isPre: isPre
         });
       }
 
@@ -880,12 +901,20 @@ async function renderMarkdown(page, options = {}) {
       // Final render inside browser
       let markdown = '';
 
-
-
       for (const p of unique.sort((a, b) => a.y - b.y)) {
         if (p.isHeading && p.text) {
           const level = Math.min(6, p.headingLevel || 2);
           markdown += `\n${'#'.repeat(level)} `;
+        }
+
+        // Keep <pre> blocks formatted
+        if (p.isPre && p.text) {
+          const codeText = p.text
+            .replace(/[`\\]/g, '\\$1') // escape backticks & backslashes only
+            .replace(/\u00A0/g, ' ');   // normalize whitespace, but keep \n
+
+          markdown += `\n\`\`\`\n${codeText}\n\`\`\`\n\n`;
+          continue; // ✅ skip paragraph rendering for code blocks
         }
 
         if (p.type === 'table') {

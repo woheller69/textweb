@@ -113,9 +113,9 @@ async function render(url, options) {
     // Show element references
     const elCount = Object.keys(result.elements || {}).length;
     if (elCount > 0) {
-      console.error(`\nInteractive elements:`);
+      console.log(`\nInteractive elements:`);
       for (const [ref, element] of Object.entries(result.elements || {})) {
-        console.error(`[${ref}] ${element.semantic || element.tag}: ${element.text || '(no text)'}`);
+        console.log(`[${ref}] ${element.semantic || element.tag}: ${element.text || '(no text)'}`);
       }
     }
 
