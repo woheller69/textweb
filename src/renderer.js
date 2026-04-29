@@ -765,8 +765,9 @@ async function renderMarkdown(page, options = {}) {
         // Skip if entirely outside rendered range
         if (renderHeight !== null && (bottom < scrollY || top > scrollY + renderHeight)) continue;
 
-        // ✅ NEW: Skip containers that are significantly taller than rendered range (likely layout wrappers)
-        if (renderHeight !== null && height > renderHeight * 5) continue;
+        // Skip containers that are significantly taller than rendered range (likely layout wrappers)
+        // Disabled, reactivate later if needed. New container selection seems to make it obsolete
+        // if (renderHeight !== null && height > renderHeight * 5) continue;
 
         const containerInteractives = allInteractives.filter(item =>
           container.contains(item.el) && !usedInteractives.has(item.el)
