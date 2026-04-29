@@ -451,18 +451,27 @@ async function renderMarkdown(page, options = {}) {
         // Return with standard Markdown spacing
         return `\n\n${hRow}\n${sepRow}\n${bodyRows.join('\n')}\n`;
       }
+
       /**
-       * Extract text from an element while preserving spaces between child text nodes.
-       * Prevents concatenation like "EUR274" → "EUR 274" with el.innerText?.trim();
-       * Exclude invisible content
+       * Extract text from an element while preserving spaces/newlines.
+       * For <pre>: preserves *all* whitespace/newlines (including indentation).
+       * For others: collapses whitespace (as per standard Markdown behavior).
+       * ✅ Correctly handles nested spans (e.g., Prism.js, highlight.js).
        * @param {Element} el - DOM element
-       * @returns {string} Text with guaranteed spaces between node boundaries
+       * @returns {string} Text with appropriate whitespace handling
        */
       function extractTextWithSpaces(el) {
+        const isPre = el.tagName.toLowerCase() === 'pre';
+
+        // ✅ Use innerText for <pre> — it respects styling, newlines, indentation, and handles nested spans correctly
+        if (isPre) {
+          return el.innerText || '';
+        }
+
+        // For non-pre: use tree walker but walk *all* descendant text nodes (including nested spans)
         const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
         const parts = [];
         let node;
-        const isPre = el.tagName.toLowerCase() === 'pre';
 
         while ((node = walker.nextNode())) {
           // ✅ Skip text nodes whose parent is visually hidden
@@ -482,17 +491,14 @@ async function renderMarkdown(page, options = {}) {
 
           const text = node.textContent;
           if (text) {
-            parts.push(isPre ? text : text.trim());
+            parts.push(text); // Push raw text — will be collapsed later
           }
         }
 
-        // Join with appropriate spacing
+        // Collapse whitespace for non-<pre> blocks
         return parts.length === 0
           ? ''
-          : (isPre
-              ? parts.join('') // preserve all newlines/indentation
-              : parts.join(' ').trim() // collapse whitespace for normal text
-            );
+          : parts.join(' ').trim();
       }
 
       /**
