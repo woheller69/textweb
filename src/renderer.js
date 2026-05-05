@@ -51,6 +51,14 @@ async function renderMarkdown(page, options = {}) {
         '.tableContainer'  // Yahoo Finance (start here; add more as needed)
       ];
 
+      const LIST_SELECTORS = ['ol', 'ul'];
+
+      // Exclude list/table subtrees from container text
+      const excludedForContainerText = [
+        ...LIST_SELECTORS, // ['ul', 'ol']
+        ...TABLE_SELECTORS // ['.tableContainer'] (if you want to be extra safe)
+      ];
+
       renderLog('Start render process', { scrollY, renderHeight });
 
       /**
@@ -277,6 +285,99 @@ async function renderMarkdown(page, options = {}) {
 
         return { headers, rows };
       }
+/**
+ * Parse standard HTML lists (<ul>, <ol>) into structured data.
+ * Extracts direct <li> children, preserves text, and collects interactives.
+ * Excludes nested lists from parent item text to avoid flattening.
+ */
+function parseListStructure(listEl) {
+  renderLog('Parsing list structure', listEl.tagName, listEl.className);
+  const isOrdered = listEl.tagName.toLowerCase() === 'ol';
+  const items = [];
+
+  // Only process direct <li> children
+  const lis = Array.from(listEl.children).filter(el => el.tagName.toLowerCase() === 'li');
+  renderLog(`Found ${lis.length} direct <li> children in ${listEl.className || listEl.tagName}`);
+
+  for (const li of lis) {
+    if (!hasPointerEvents(li)) continue;
+
+    // ✅ Extract text while explicitly skipping nested list subtrees
+    const text = extractTextExcludingNestedLists(li).trim();
+    renderLog(`LI text extracted: "${text?.substring(0, 100)}${text?.length > 100 ? '...' : ''}"`);
+
+    if (!text) {
+      renderLog('Skipping LI with empty text after nested list exclusion');
+      continue;
+    }
+
+    // Collect interactives from the ORIGINAL li (not filtered)
+    const interactives = Array.from(
+      li.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"]')
+    ).filter(el => hasPointerEvents(el) && isInteractiveElement(el));
+
+    items.push({ text, interactives });
+  }
+
+  renderLog(`Parsed ${items.length} items from list ${listEl.className || listEl.tagName}`);
+  return { isOrdered, items };
+}
+
+/**
+ * Extract text from an element while skipping any subtrees that are nested lists.
+ * Prevents flattening of nested LIST_SELECTORS into parent list items.
+ */
+function extractTextExcludingNestedLists(el) {
+  const parts = [];
+  const isPre = el.tagName.toLowerCase() === 'pre';
+
+  // Create a TreeWalker but skip nested list elements entirely
+  const walker = document.createTreeWalker(
+    el,
+    NodeFilter.SHOW_TEXT,
+    {
+      acceptNode: (node) => {
+        // Check if this text node is inside a nested list
+        let parent = node.parentElement;
+        while (parent && parent !== el) {
+          const tag = parent.tagName.toLowerCase();
+          if (LIST_SELECTORS.includes(tag)) {
+            return NodeFilter.FILTER_REJECT; // Skip this entire subtree
+          }
+          parent = parent.parentElement;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    }
+  );
+
+  let node;
+  while ((node = walker.nextNode())) {
+    const parent = node.parentElement;
+    if (!parent) continue;
+
+    // Skip invisible text (same checks as extractTextWithSpaces)
+    const style = getComputedStyle(parent);
+    if (
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      parseFloat(style.opacity) === 0 ||
+      parent.offsetParent === null
+    ) {
+      continue;
+    }
+
+    const text = node.textContent;
+    if (text) {
+      parts.push(isPre ? text : text.trim());
+    }
+  }
+
+  return parts.length === 0
+    ? ''
+    : (isPre ? parts.join('') : parts.join(' ').trim());
+}
+
 
       /**
        * Parse HTML table structure into headers and rows with interactive references.
@@ -458,9 +559,10 @@ async function renderMarkdown(page, options = {}) {
        * For others: collapses whitespace (as per standard Markdown behavior).
        * ✅ Correctly handles nested spans (e.g., Prism.js, highlight.js).
        * @param {Element} el - DOM element
+       * @param {string[]} [excludedSelectors] - Optional list of selectors whose subtrees should be excluded (e.g., ['ul', 'ol', '.tableContainer'])
        * @returns {string} Text with appropriate whitespace handling
        */
-      function extractTextWithSpaces(el) {
+      function extractTextWithSpaces(el, excludedSelectors = []) {
         const isPre = el.tagName.toLowerCase() === 'pre';
 
         // ✅ Use innerText for <pre> — it respects styling, newlines, indentation, and handles nested spans correctly
@@ -468,34 +570,50 @@ async function renderMarkdown(page, options = {}) {
           return el.innerText || '';
         }
 
-        // For non-pre: use tree walker but walk *all* descendant text nodes (including nested spans)
-        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+        // ✅ Create TreeWalker with dynamic exclusion logic
+        const walker = document.createTreeWalker(
+          el,
+          NodeFilter.SHOW_TEXT,
+          {
+            acceptNode: (node) => {
+              const parent = node.parentElement;
+              if (!parent) return NodeFilter.FILTER_REJECT; // Safety
+
+              // ✅ 1. Skip invisible text (original logic)
+              const style = getComputedStyle(parent);
+              if (
+                style.display === 'none' ||
+                style.visibility === 'hidden' ||
+                parseFloat(style.opacity) === 0 ||
+                parent.offsetParent === null
+              ) {
+                return NodeFilter.FILTER_SKIP;
+              }
+
+              // ✅ 2. Skip if inside any excluded selector (NEW)
+              for (const sel of excludedSelectors) {
+                // Check if *any ancestor* matches the selector
+                if (parent.closest?.(sel)) {
+                  return NodeFilter.FILTER_REJECT; // Reject this subtree entirely
+                }
+              }
+
+              return NodeFilter.FILTER_ACCEPT;
+            }
+          }
+        );
+
         const parts = [];
         let node;
 
         while ((node = walker.nextNode())) {
-          // ✅ Skip text nodes whose parent is visually hidden
-          const parent = node.parentElement;
-          if (!parent) continue;
-
-          // Skip invisible text (via parent's computed style)
-          const style = getComputedStyle(parent);
-          if (
-            style.display === 'none' ||
-            style.visibility === 'hidden' ||
-            parseFloat(style.opacity) === 0 ||
-            parent.offsetParent === null
-          ) {
-            continue;
-          }
-
           const text = node.textContent;
           if (text) {
-            parts.push(text); // Push raw text — will be collapsed later
+            parts.push(text);
           }
         }
 
-        // Collapse whitespace for non-<pre> blocks
+        // ✅ Collapse whitespace for non-<pre> blocks
         return parts.length === 0
           ? ''
           : parts.join(' ').trim();
@@ -668,34 +786,109 @@ async function renderMarkdown(page, options = {}) {
       // Track processed div-based tables to avoid duplicates
       const processedDivTables = new Set();
 
+      // ── Collect and filter containers ────────────────────────────────────────────
+      renderLog('Processing containers');
+
       const allContainers = Array.from(document.querySelectorAll(INCLUDED_SELECTORS));
-      // ❌ Exclude elements inside semantic <table> OR any div-based table container
-      const filteredContainers = allContainers.filter(el => {
-        // Remove containers that contain OTHER matched elements (keep leaf nodes)
-        if (allContainers.some(o => o !== el && el.contains(o))) {
+      const filteredContainers = allContainers.filter((el) => {
+        // 1. Remove containers that *contain other matched elements* (keep leaf nodes)
+        //    e.g., if <div> contains <p>, keep only <p>, not the wrapper <div>
+        if (allContainers.some((other) => other !== el && el.contains(other))) {
           return false;
         }
 
-        // Exclude div wrappers around tables and div-based tables (e.g., .tableContainer)
+        // 2. ✅ Exclude semantic tables
+        if (el.tagName.toLowerCase() === 'table') return false;
+
+        // 3. ✅ Exclude div-based tables: either via TABLE_SELECTORS OR if it contains a <table>
         if (el.tagName.toLowerCase() === 'div') {
-          if (el.querySelector('table')) return false;
+          // First: explicit selectors (e.g., .tableContainer)
           for (const selector of TABLE_SELECTORS) {
-            if (el.querySelector(selector)) {
-              return false;
+            if (el.matches(selector)) return false;
+            if (el.closest(selector)) return false;
+          }
+
+          // ✅ NEW: Also exclude divs that *contain* a semantic <table>
+          if (el.querySelector('table')) return false;
+        }
+
+        // 4. ✅ Keep containers *even if* they contain lists/tables — we'll exclude list/table text during extraction
+        //    So: DO NOT exclude containers just because they have a list/table inside
+
+        // 5. ✅ Existing exclusions: ads, nav items, etc.
+        for (const selector of EXCLUDED_SELECTORS) {
+          if (el.closest(selector)) return false;
+        }
+
+        // 6. ✅ Skip containers inside semantic tables (double-check)
+        if (el.closest('table')) return false;
+
+        // 7. ✅ Skip if *only* contains lists/tables AND has no meaningful text on its own
+        if (el.tagName.toLowerCase() === 'div' || el.tagName.toLowerCase() === 'section') {
+          const textWithoutListsTables = extractTextWithSpaces(el, [
+            ...LIST_SELECTORS,
+            ...TABLE_SELECTORS
+          ]);
+
+          if (!textWithoutListsTables.trim()) {
+            renderLog(`Skipping wrapper container ${el.className || ''} (no non-list/table text)`);
+            return false;
+          }
+        }
+
+        return true;
+      });
+
+
+      // ── Process Lists (Independent of INCLUDED_SELECTORS) ─────────────────────
+      renderLog('Processing Lists');
+
+      const allLists = Array.from(document.querySelectorAll(LIST_SELECTORS.join(', ')))
+        .filter(list => {
+          // ✅ NEW: Skip lists inside tables — treat them as inline content
+          if (list.closest('table')) {
+            renderLog(`Skipping list ${list.className || list.tagName} inside table`);
+            return false;
+          }
+          return hasPointerEvents(list);
+        });
+
+      for (const listEl of allLists) {
+        const rect = listEl.getBoundingClientRect();
+        const top = rect.top + window.scrollY;
+
+        // Respect render height filtering
+        if (renderHeight !== null && (top < scrollY || top > scrollY + renderHeight)) continue;
+
+        const listData = parseListStructure(listEl);
+        if (listData.items.length === 0) continue;
+
+        // Embed interactive references inline in list items
+        for (const item of listData.items) {
+          for (const rawEl of item.interactives) {
+            const interactiveItem = allInteractives.find(i => i.el === rawEl);
+            if (interactiveItem) {
+              let text = item.text;
+              ({ text, refId } = embedInteractiveRef(text, interactiveItem, elementMap, refId, { fallbackAppend: true }));
+              item.text = text;
             }
           }
         }
 
-        // Existing exclusion filters
-        for (const selector of EXCLUDED_SELECTORS) {
-          if (el.closest(selector)) return false;
-        }
-        if (el.closest('table')) return false;
-        for (const selector of TABLE_SELECTORS) {
-          if (el.closest(selector)) return false;
-        }
-        return true;
-      });
+        // Mark contained interactives as used so they don't appear as orphans
+        const listInteractives = allInteractives.filter(i => listEl.contains(i.el) && !usedInteractives.has(i.el));
+        listInteractives.forEach(i => usedInteractives.add(i.el));
+
+        results.push({
+          type: 'list',
+          y: top,
+          data: listData,
+          interactives: listInteractives,
+          selector: buildSimpleSelector(listEl)
+        });
+      }
+      // ── End list processing ──────────────────────────────────────────────────
+
 
       // ── Process div-based tables ────────────────────────────────────────────────
       renderLog('Processing DIV Tables');
@@ -757,7 +950,7 @@ async function renderMarkdown(page, options = {}) {
         if (!hasPointerEvents(container)) continue;
           // 👇 NEW: Detect and mark <pre> elements
         const isPre = container.tagName.toLowerCase() === 'pre';
-        const text = extractTextWithSpaces(container);
+        const text = extractTextWithSpaces(container, excludedForContainerText);
         if (!text && !isPre) continue; // allow empty pre if it has interactives? Rare, but okay.
 
         const rect = container.getBoundingClientRect();
@@ -899,6 +1092,35 @@ async function renderMarkdown(page, options = {}) {
           markdown += `\n\`\`\`\n${codeText}\n\`\`\`\n\n`;
           continue; // ✅ skip paragraph rendering for code blocks
         }
+
+                // ── Render Lists ────────────────────────────────────────────────────────
+        if (p.type === 'list') {
+          const { isOrdered, items } = p.data;
+          const renderedItems = [];
+
+          for (let i = 0; i < items.length; i++) {
+            let text = escapeForLLM(items[i].text || '');
+            if (!text) continue;
+
+            // Embed interactives inside this list item
+            if (items[i].interactives.length > 0) {
+              for (const intItem of items[i].interactives) {
+                ({ text, refId } = embedInteractiveRef(text, intItem, elementMap, refId, { fallbackAppend: true }));
+              }
+            }
+
+            const cleaned = text.replace(/\s+/g, ' ').trim();
+            if (cleaned) {
+              renderedItems.push(isOrdered ? `${i + 1}. ${cleaned}` : `- ${cleaned}`);
+            }
+          }
+
+          if (renderedItems.length > 0) {
+            markdown += renderedItems.join('\n') + '\n\n';
+          }
+          continue;
+        }
+
 
         if (p.type === 'table') {
           markdown += renderTableLLMOptimized(p.data);
