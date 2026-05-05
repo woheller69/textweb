@@ -130,7 +130,7 @@ async function renderMarkdown(page, options = {}) {
             tag === 'input' && ['checkbox', 'radio'].includes(type) ? type :
             tag,
           href: item.href || null,
-          text: truncateText(item.text),
+          text: item.text,
           label: item.text,
           x: item.x, y: item.y, w: item.w, h: item.h,
           action: getAction(tag === 'a' ? 'link' : tag),
@@ -962,6 +962,12 @@ async function renderMarkdown(page, options = {}) {
 
       // Final global replace for embedded references:
       markdown = markdown.replace(/@@REF(\d+)@@/g, '<$1>');
+
+      // After all refs are embedded and markdown built...
+      // Post-process elementMap to truncate safely:
+      for (const [refId, element] of Object.entries(elementMap)) {
+        element.text = element.text ? truncateText(element.text, 80) : '';
+      }
 
       const fullHeight = document.documentElement.scrollHeight;
 
