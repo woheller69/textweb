@@ -1,5 +1,5 @@
 /**
- * TextWeb Markdown Renderer v2.3 — Fully browser-safe with Synchronous Logging
+ * TextWeb Markdown Renderer v2.4 — Fully browser-safe with Synchronous Logging
  * Renders page to Markdown + element map entirely in browser context.
  */
 
@@ -120,17 +120,51 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
+       * Helper: check if an href is meaningful for deduplication.
+       * Excludes #, javascript:, mailto:, tel:, empty strings.
+       */
+      function isUsefulHref(href) {
+        return href &&
+          href !== '#' &&
+          !href.startsWith('javascript:') &&
+          !href.startsWith('mailto:') &&
+          !href.startsWith('tel:') &&
+          href.trim() !== '';
+      }
+
+      /**
        * Create a standardized element map entry for an interactive item.
        * Used to populate the `elements` object returned in render result.
-       * @param {number} ref - Unique reference ID for this element
+       *
+       * ✅ NEW: Link deduplication — if this is a link and href already exists,
+       *         returns the existing nextRefId instead of incrementing.
+       *         Otherwise: allocates new nextRefId and returns it.
+       *
        * @param {Object} item - Element data with properties like tag, selector, href, text, etc.
-       * @returns {InteractiveElement} Structured element entry
+       * @param {Object} elementMap - Mutable map to register the ref entry
+       * @returns {number} nextRefId — either reused or newly allocated
        */
-      function createElementMapEntry(ref, item) {
+      function createElementMapEntry(item, elementMap) {
         const tag = item.tag;
         const type = item.type;
 
-        return {
+        // 🔍 Deduplicate links by href: check if same href already in elementMap
+        if (tag === 'a' && isUsefulHref(item.href)) {
+          for (const [existingRefIdStr, existingEntry] of Object.entries(elementMap)) {
+            if (
+              existingEntry.tag === 'a' &&
+              existingEntry.href === item.href
+            ) {
+              renderLog(`Reusing refId ${existingRefIdStr} for link "${item.href}"`);
+              return Number(existingRefIdStr);
+            }
+          }
+        }
+
+        // No duplicate — allocate new ID
+
+        const refIdNum = nextRefId++;
+        elementMap[refIdNum] = {
           selector: item.selector,
           tag: tag,
           semantic: tag === 'a' ? 'link' :
@@ -150,7 +184,11 @@ async function renderMarkdown(page, options = {}) {
           placeholder: item.placeholder || null,
           name: item.name || null,
           type: type || null,
+          refId: refIdNum // ✅ include nextRefId for traceability
         };
+
+        renderLog(`Assigned refId ${refIdNum} for ${tag} "${item.text?.substring(0, 20)}${item.text?.length > 20 ? '...' : ''}"`);
+        return refIdNum;
       }
 
       /**
@@ -285,98 +323,99 @@ async function renderMarkdown(page, options = {}) {
 
         return { headers, rows };
       }
-/**
- * Parse standard HTML lists (<ul>, <ol>) into structured data.
- * Extracts direct <li> children, preserves text, and collects interactives.
- * Excludes nested lists from parent item text to avoid flattening.
- */
-function parseListStructure(listEl) {
-  renderLog('Parsing list structure', listEl.tagName, listEl.className);
-  const isOrdered = listEl.tagName.toLowerCase() === 'ol';
-  const items = [];
 
-  // Only process direct <li> children
-  const lis = Array.from(listEl.children).filter(el => el.tagName.toLowerCase() === 'li');
-  renderLog(`Found ${lis.length} direct <li> children in ${listEl.className || listEl.tagName}`);
+      /**
+       * Parse standard HTML lists (<ul>, <ol>) into structured data.
+       * Extracts direct <li> children, preserves text, and collects interactives.
+       * Excludes nested lists from parent item text to avoid flattening.
+       */
+      function parseListStructure(listEl) {
+        renderLog('Parsing list structure', listEl.tagName, listEl.className);
+        const isOrdered = listEl.tagName.toLowerCase() === 'ol';
+        const items = [];
 
-  for (const li of lis) {
-    if (!hasPointerEvents(li)) continue;
+        // Only process direct <li> children
+        const lis = Array.from(listEl.children).filter(el => el.tagName.toLowerCase() === 'li');
+        renderLog(`Found ${lis.length} direct <li> children in ${listEl.className || listEl.tagName}`);
 
-    // ✅ Extract text while explicitly skipping nested list subtrees
-    const text = extractTextExcludingNestedLists(li).trim();
-    renderLog(`LI text extracted: "${text?.substring(0, 100)}${text?.length > 100 ? '...' : ''}"`);
+        for (const li of lis) {
+          if (!hasPointerEvents(li)) continue;
 
-    if (!text) {
-      renderLog('Skipping LI with empty text after nested list exclusion');
-      continue;
-    }
+          // ✅ Extract text while explicitly skipping nested list subtrees
+          const text = extractTextExcludingNestedLists(li).trim();
+          renderLog(`LI text extracted: "${text?.substring(0, 100)}${text?.length > 100 ? '...' : ''}"`);
 
-    // Collect interactives from the ORIGINAL li (not filtered)
-    const interactives = Array.from(
-      li.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"]')
-    ).filter(el => hasPointerEvents(el) && isInteractiveElement(el));
-
-    items.push({ text, interactives });
-  }
-
-  renderLog(`Parsed ${items.length} items from list ${listEl.className || listEl.tagName}`);
-  return { isOrdered, items };
-}
-
-/**
- * Extract text from an element while skipping any subtrees that are nested lists.
- * Prevents flattening of nested LIST_SELECTORS into parent list items.
- */
-function extractTextExcludingNestedLists(el) {
-  const parts = [];
-  const isPre = el.tagName.toLowerCase() === 'pre';
-
-  // Create a TreeWalker but skip nested list elements entirely
-  const walker = document.createTreeWalker(
-    el,
-    NodeFilter.SHOW_TEXT,
-    {
-      acceptNode: (node) => {
-        // Check if this text node is inside a nested list
-        let parent = node.parentElement;
-        while (parent && parent !== el) {
-          const tag = parent.tagName.toLowerCase();
-          if (LIST_SELECTORS.includes(tag)) {
-            return NodeFilter.FILTER_REJECT; // Skip this entire subtree
+          if (!text) {
+            renderLog('Skipping LI with empty text after nested list exclusion');
+            continue;
           }
-          parent = parent.parentElement;
+
+          // Collect interactives from the ORIGINAL li (not filtered)
+          const interactives = Array.from(
+            li.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"]')
+          ).filter(el => hasPointerEvents(el) && isInteractiveElement(el));
+
+          items.push({ text, interactives });
         }
-        return NodeFilter.FILTER_ACCEPT;
+
+        renderLog(`Parsed ${items.length} items from list ${listEl.className || listEl.tagName}`);
+        return { isOrdered, items };
       }
-    }
-  );
 
-  let node;
-  while ((node = walker.nextNode())) {
-    const parent = node.parentElement;
-    if (!parent) continue;
+      /**
+       * Extract text from an element while skipping any subtrees that are nested lists.
+       * Prevents flattening of nested LIST_SELECTORS into parent list items.
+       */
+      function extractTextExcludingNestedLists(el) {
+        const parts = [];
+        const isPre = el.tagName.toLowerCase() === 'pre';
 
-    // Skip invisible text (same checks as extractTextWithSpaces)
-    const style = getComputedStyle(parent);
-    if (
-      style.display === 'none' ||
-      style.visibility === 'hidden' ||
-      parseFloat(style.opacity) === 0 ||
-      parent.offsetParent === null
-    ) {
-      continue;
-    }
+        // Create a TreeWalker but skip nested list elements entirely
+        const walker = document.createTreeWalker(
+          el,
+          NodeFilter.SHOW_TEXT,
+          {
+            acceptNode: (node) => {
+              // Check if this text node is inside a nested list
+              let parent = node.parentElement;
+              while (parent && parent !== el) {
+                const tag = parent.tagName.toLowerCase();
+                if (LIST_SELECTORS.includes(tag)) {
+                  return NodeFilter.FILTER_REJECT; // Skip this entire subtree
+                }
+                parent = parent.parentElement;
+              }
+              return NodeFilter.FILTER_ACCEPT;
+            }
+          }
+        );
 
-    const text = node.textContent;
-    if (text) {
-      parts.push(isPre ? text : text.trim());
-    }
-  }
+        let node;
+        while ((node = walker.nextNode())) {
+          const parent = node.parentElement;
+          if (!parent) continue;
 
-  return parts.length === 0
-    ? ''
-    : (isPre ? parts.join('') : parts.join(' ').trim());
-}
+          // Skip invisible text (same checks as extractTextWithSpaces)
+          const style = getComputedStyle(parent);
+          if (
+            style.display === 'none' ||
+            style.visibility === 'hidden' ||
+            parseFloat(style.opacity) === 0 ||
+            parent.offsetParent === null
+          ) {
+            continue;
+          }
+
+          const text = node.textContent;
+          if (text) {
+            parts.push(isPre ? text : text.trim());
+          }
+        }
+
+        return parts.length === 0
+          ? ''
+          : (isPre ? parts.join('') : parts.join(' ').trim());
+      }
 
 
       /**
@@ -492,6 +531,7 @@ function extractTextExcludingNestedLists(el) {
 
         return { headers, rows };
       }
+
       /**
        * * Renders table data into a compact Markdown table optimized for LLM consumption.
        *  * Uses symmetric delimiters ( | ) for clarity while minimizing token usage.
@@ -639,29 +679,27 @@ function extractTextExcludingNestedLists(el) {
       /**
        * Embed an interactive reference into target text using @@REFn@@ placeholder.
        * Tries regex match first, then optionally appends reference as fallback.
-       * Updates the element map with the new entry.
+       *
+       * ✅ FIXED: No longer destructures `nextRefId` (which caused NaN).
+       * ✅ Uses `createElementMapEntry` which now handles link deduplication.
+       *
        * @param {string} targetText - The text to search/modify
        * @param {Object} item - The interactive item (must have `.text` property)
        * @param {Object} elementMap - Mutable map to register the ref entry
-       * @param {number} refId - Current reference counter (will be incremented if inserted)
        * @param {Object} [options] - Options
        * @param {boolean} [options.fallbackAppend=false] - Whether to append fallback if no regex match
-       * @returns {{ text: string, refId: number, ref: number|null, matched: boolean }}
+       * @returns {{text: string, matched: boolean}}
        *   - text {string} Updated text (with reference or unchanged)
-       *   - refId {number} Updated ref counter
-       *   - ref {number|null} ID of inserted reference (or null if not inserted)
        *   - matched {boolean} Whether regex matched the reference text
        */
-      function embedInteractiveRef(targetText, item, elementMap, refId, { fallbackAppend = false } = {}) {
+      function embedInteractiveRef(targetText, item, elementMap, { fallbackAppend = false } = {}) {
         if (!item || !item.text?.trim()) {
-          return { text: targetText, refId, ref: null, matched: false };
+          return { text: targetText, matched: false };
         }
 
         const itemText = item.text.trim();
-        const ref = refId++;
-        const placeholder = `@@REF${ref}@@`;
-
-        elementMap[ref] = createElementMapEntry(ref, item);
+        const refId = createElementMapEntry(item, elementMap); // ✅ Now returns the used nextRefId
+        const placeholder = `@@REF${refId}@@`;
 
         // Escape for LLM + regex safety
         const escapedItemText = escapeForLLM(itemText);
@@ -675,16 +713,16 @@ function extractTextExcludingNestedLists(el) {
         if (match) {
           // Preserve surrounding context while injecting placeholder
           targetText = targetText.replace(regex, `${match[1]}${match[2]}${placeholder}${match[3]}`);
-          return { text: targetText, refId, ref, matched: true };
+          return { text: targetText, matched: true };
         }
 
         // No match found
         if (fallbackAppend) {
           // Append reference at end as fallback
-          targetText = `${targetText}@@REF${ref}@@`;
+          targetText = `${targetText}@@REF${refId}@@`;
         }
 
-        return { text: targetText, refId, ref, matched: false };
+        return { text: targetText, matched: false };
       }
 
       /**
@@ -725,7 +763,7 @@ function extractTextExcludingNestedLists(el) {
       // ─── MAIN EXTRACT + RENDER LOGIC ──────────────────────────────────────────
       renderLog('Beginning DOM Extraction');
 
-      let refId = 1;
+      let nextRefId = 1;
       const elementMap = {};
       // 1. Collect interactives
       renderLog('Scanning interactive elements...');
@@ -869,7 +907,7 @@ function extractTextExcludingNestedLists(el) {
             const interactiveItem = allInteractives.find(i => i.el === rawEl);
             if (interactiveItem) {
               let text = item.text;
-              ({ text, refId } = embedInteractiveRef(text, interactiveItem, elementMap, refId, { fallbackAppend: true }));
+              ({ text } = embedInteractiveRef(text, interactiveItem, elementMap, { fallbackAppend: true }));
               item.text = text;
             }
           }
@@ -917,7 +955,7 @@ function extractTextExcludingNestedLists(el) {
               for (const rawEl of cell.interactives) {
                 const item = allInteractives.find(i => i.el === rawEl);
                 if (item) {
-                  ({ text, refId } = embedInteractiveRef(text, item, elementMap, refId, { fallbackAppend: true }));
+                  ({ text } = embedInteractiveRef(text, item, elementMap, { fallbackAppend: true }));
                 }
               }
               cell.text = text;
@@ -943,7 +981,7 @@ function extractTextExcludingNestedLists(el) {
         });
       }
       renderLog(`Found ${results.length} tables so far`);
-// ── End div-table processing ─────────────────────────────────────────────
+      // ── End div-table processing ─────────────────────────────────────────────
 
 
       for (const container of filteredContainers) {
@@ -1007,7 +1045,7 @@ function extractTextExcludingNestedLists(el) {
 
               for (const rawEl of cell.interactives) {
                 const item = allInteractives.find(i => i.el === rawEl);
-                ({ text, refId } = embedInteractiveRef(text, item, elementMap, refId, {fallbackAppend: true}));
+                ({ text } = embedInteractiveRef(text, item, elementMap, {fallbackAppend: true}));
               }
               cell.text = text;
             }
@@ -1128,12 +1166,10 @@ function extractTextExcludingNestedLists(el) {
             if (['div', 'span', 'section'].includes(item.tag)) continue;
             if (!item.text?.trim()) continue;
 
-            const ref = refId++;
-            elementMap[ref] = createElementMapEntry(ref, item);
-
-            let display = `${item.text}@@REF${ref}@@`;
+            const refId = createElementMapEntry(item, elementMap);
+            let display = `${item.text}@@REF${refId}@@`;
             if (item.tag === 'input' && (item.type === 'submit' || item.type === 'button')) {
-              display = `[${item.text}]@@REF${ref}@@`;
+              display = `[${item.text}]@@REF${refId}@@`;
             }
             markdown += `${display}\n\n`;
           }
@@ -1147,7 +1183,7 @@ function extractTextExcludingNestedLists(el) {
         if (p.interactives.length > 0) {
 
           for (const item of p.interactives) {
-            ({ text, refId } = embedInteractiveRef(text, item, elementMap, refId));
+            ({ text } = embedInteractiveRef(text, item, elementMap));
           }
 
           // ── Append unmatched form field refs (inputs, buttons, selects) ──
@@ -1195,7 +1231,7 @@ function extractTextExcludingNestedLists(el) {
           scrollY,
           renderHeight: renderHeight ?? fullHeight,
           fullHeight,
-          totalRefs: refId - 1,
+          totalRefs: nextRefId - 1,
           url: location.href,
           title: document.title
         },
