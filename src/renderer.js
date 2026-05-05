@@ -1093,7 +1093,7 @@ function extractTextExcludingNestedLists(el) {
           continue; // ✅ skip paragraph rendering for code blocks
         }
 
-                // ── Render Lists ────────────────────────────────────────────────────────
+        // ── Render Lists ────────────────────────────────────────────────────────
         if (p.type === 'list') {
           const { isOrdered, items } = p.data;
           const renderedItems = [];
@@ -1101,13 +1101,6 @@ function extractTextExcludingNestedLists(el) {
           for (let i = 0; i < items.length; i++) {
             let text = escapeForLLM(items[i].text || '');
             if (!text) continue;
-
-            // Embed interactives inside this list item
-            if (items[i].interactives.length > 0) {
-              for (const intItem of items[i].interactives) {
-                ({ text, refId } = embedInteractiveRef(text, intItem, elementMap, refId, { fallbackAppend: true }));
-              }
-            }
 
             const cleaned = text.replace(/\s+/g, ' ').trim();
             if (cleaned) {
@@ -1121,7 +1114,7 @@ function extractTextExcludingNestedLists(el) {
           continue;
         }
 
-
+        // ── Render Tables ────────────────────────────────────────────────────────
         if (p.type === 'table') {
           markdown += renderTableLLMOptimized(p.data);
 
