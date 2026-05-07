@@ -27,6 +27,38 @@ async function renderMarkdown(page, options = {}) {
       let logIndex = 0;
 
       /**
+       * Determines whether a DOM element's bounding rectangle is *entirely* outside
+       * the currently rendered vertical viewport.
+       *
+       * The rendered viewport is defined as the interval `[scrollY, scrollY + renderHeight)`.
+       * If `renderHeight === null`, no clipping is applied and the function always returns `false`.
+       *
+       * ✅ Handles elements that straddle the top or bottom edge of the viewport — only returns `true`
+       *    when the element has *zero vertical overlap* with the rendered region.
+       *
+       * ⚠️ Requires `rect` to be a `DOMRect`/`DOMRectReadOnly` obtained from `element.getBoundingClientRect()`.
+       *    (Note: `rect.top` and `rect.bottom` are viewport-relative, so we add `window.scrollY` to get document coordinates.)
+       *
+       * @param {DOMRect | DOMRectReadOnly} rect - Bounding rectangle of the element (from `getBoundingClientRect()`).
+       * @returns {boolean} `true` if the element is completely above or below the rendered region, `false` otherwise.
+       *
+       * @example
+       * // Usage in rendering loop:
+       * const rect = element.getBoundingClientRect();
+       * if (isOutsideRenderedRange(rect)) {
+       *   continue; // Skip rendering this element — it's not visible
+       * }
+       *
+       * @see renderMarkdown — where `renderHeight` and `scrollY` are set via Playwright options.
+       */
+      function isOutsideRenderedRange(rect) {
+        const top = rect.top + window.scrollY;
+        const bottom = rect.bottom + window.scrollY;
+
+        return renderHeight !== null && (bottom < scrollY || top > scrollY + renderHeight);
+      }
+
+      /**
        * Synchronous logging function for browser context.
        * @param {...any} args - Arguments to log
        */
@@ -778,7 +810,7 @@ async function renderMarkdown(page, options = {}) {
 
         const rect = el.getBoundingClientRect();
         const top = rect.top + window.scrollY;
-        if (renderHeight !== null && (top < scrollY || top > scrollY + renderHeight)) return;
+        if ((isOutsideRenderedRange(rect))) return;
 
         let text = '';
         if (el.tagName === 'INPUT') {
@@ -894,9 +926,8 @@ async function renderMarkdown(page, options = {}) {
       for (const listEl of allLists) {
         const rect = listEl.getBoundingClientRect();
         const top = rect.top + window.scrollY;
-
         // Respect render height filtering
-        if (renderHeight !== null && (top < scrollY || top > scrollY + renderHeight)) continue;
+        if (isOutsideRenderedRange(rect)) continue;
 
         const listData = parseListStructure(listEl);
         if (listData.items.length === 0) continue;
@@ -941,7 +972,7 @@ async function renderMarkdown(page, options = {}) {
         const top = rect.top + window.scrollY;
 
         // Rendered range filtering
-        if (renderHeight !== null && (top < scrollY || top > scrollY + renderHeight)) continue;
+        if (isOutsideRenderedRange(rect)) continue;
 
         // Parse the div-table structure
         const tableData = parseDivTableStructure(tableContainer);
@@ -993,11 +1024,9 @@ async function renderMarkdown(page, options = {}) {
 
         const rect = container.getBoundingClientRect();
         const top = rect.top + window.scrollY;
-        const bottom = rect.bottom + window.scrollY;
-        const height = rect.height;
 
         // Skip if entirely outside rendered range
-        if (renderHeight !== null && (bottom < scrollY || top > scrollY + renderHeight)) continue;
+        if ((isOutsideRenderedRange(rect))) continue;
 
         // Skip containers that are significantly taller than rendered range (likely layout wrappers)
         // Disabled, reactivate later if needed. New container selection seems to make it obsolete
@@ -1031,8 +1060,10 @@ async function renderMarkdown(page, options = {}) {
           continue;
         }
         if (!hasPointerEvents(table)) continue;
-        const top = table.getBoundingClientRect().top + window.scrollY;
-        if (renderHeight !== null && (top < scrollY || top > scrollY + renderHeight)) continue;
+        const rect = table.getBoundingClientRect();
+        const top = rect.top + window.scrollY;
+
+        if (isOutsideRenderedRange(rect)) continue;
 
         const tableData = parseTableStructure(table);
 
