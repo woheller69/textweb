@@ -11,7 +11,6 @@ const path = require('path');
 chromium.use(StealthPlugin());
 
 const DEFAULT_VIEWPORT = { width: 800, height: 1000 };
-const DEFAULT_RENDER_HEIGHT = 3000;
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
@@ -47,6 +46,12 @@ class AgentBrowser {
      * @type {number}
      */
     this.scrollY = 0;
+
+    /**
+     * Current pagination page index (0-based)
+     * @type {number}
+     */
+    this.currentPage = 0;
 
     /**
      * Playwright Browser instance (when launched)
@@ -232,19 +237,20 @@ class AgentBrowser {
    * @param {number} [options.timeoutMs] - Override timeout
    * @returns {Promise<Object>} Render result: `{ view, elements, meta }`
    */
-  async navigate(url, options = {}) {
-    if (!this.page) await this.launch();
-    this.scrollY = 0;
+    async navigate(url, options = {}) {
+      if (!this.page) await this.launch();
+      this.scrollY = 0;
+      this.currentPage = 0; // ← RESET PAGE on navigation
+      delete this._paginationCache; // ensure fresh pagination
 
-    await this._withRetries('navigate', async () => {
-      // Wait until page is fully loaded
-      await this.page.goto(url, { waitUntil: 'load', timeout: options.timeoutMs || this.defaultTimeout });
-      // Wait for network to settle or 3s max — whichever comes first
-      await this._settle();
-    }, options);
+      await this._withRetries('navigate', async () => {
+        await this.page.goto(url, { waitUntil: 'load', timeout: options.timeoutMs || this.defaultTimeout });
+        await this._settle();
+      }, options);
 
-    return await this.snapshot();
-  }
+      return await this.snapshot(); // returns page 0
+    }
+
 
   /**
    * Capture and render the current page between scrollY and scrollY+renderHeight.
@@ -252,31 +258,41 @@ class AgentBrowser {
    * ✅ Auto-saves storage state to `currentStoragePath` *after* rendering (if enabled).
    * @returns {Promise<Object>} Render result: `{ view, elements, meta }`
    */
-  async snapshot() {
-    if (!this.page) throw new Error('No page open. Call navigate() first.');
+    async snapshot() {
+      if (!this.page) throw new Error('No page open. Call navigate() first.');
     //TODO: make an option for this! This may also remove reference links tied to the selector
     // ✅ Remove ALL images and videos after page settles
-    await this.page.evaluate(() => {document.querySelectorAll('img, video, picture, source, canvas, .aj-video-player, .video-page, .video-js, .live-stream-widget, .responsive-image').forEach(el => el.style.maxHeight="10px");});
+      await this.page.evaluate(() => {document.querySelectorAll('img, video, picture, source, canvas, .aj-video-player, .video-page, .video-js, .live-stream-widget, .responsive-image').forEach(el => el.style.maxHeight="10px");});
 
-    this.scrollY = await this.page.evaluate(() => window.scrollY);  // sync with browser window
+      this.scrollY = await this.page.evaluate(() => window.scrollY);  // sync with browser window
 
-    this.lastResult = await renderMarkdown(this.page, {
-      scrollY: this.scrollY,
-      renderHeight: DEFAULT_RENDER_HEIGHT,
-    });
+      // 🔁 Full-page render (no clipping)
+      this.lastResult = await renderMarkdown(this.page, {
+        scrollY: this.scrollY,
+        renderHeight: null,  //NEW: always render full page
+      });
 
-    console.log('\n📊 Meta Summary:\n');
-    console.log(`  URL: ${this.lastResult.meta.url}`);
-    console.log(`  Title: ${this.lastResult.meta.title}`);
-    console.log(`  Scroll Y: ${this.lastResult.meta.scrollY}px`);
-    console.log(`  Render Height: ${this.lastResult.meta.renderHeight}px`);
-    console.log(`  Full Height: ${this.lastResult.meta.fullHeight}px`);
-    console.log(`  Total References: ${this.lastResult.meta.totalRefs}`);
-    console.log('\n--- DEBUG LOGS ---');
-    console.log(this.lastResult.logs); // Outputs your collected render log string
+      console.log('\n📊 Meta Summary:\n');
+      console.log(`  URL: ${this.lastResult.meta.url}`);
+      console.log(`  Title: ${this.lastResult.meta.title}`);
+      console.log(`  Scroll Y: ${this.lastResult.meta.scrollY}px`);
+      console.log(`  Full Height: ${this.lastResult.meta.fullHeight}px`);
+      console.log(`  Total References: ${this.lastResult.meta.totalRefs}`);
 
-    return this.lastResult;
-  }
+      // 🧩 Paginate once (caches if you want to memoize)
+      const pagination = this.paginateRender(this.lastResult, { linesPerPage: 150 });
+      this._paginationCache = pagination;
+
+
+      // ✅ Return *current* page, not always page 0
+      const currentPageData = pagination.pages[this.currentPage];
+
+      console.log(`  Current Page: ${currentPageData.pageIdx + 1}`);
+      console.log(`  TotalPages: ${currentPageData.totalPages}`);
+
+      return currentPageData;
+    }
+
 
     /**
    * Helper: Detect if element is a checkbox
@@ -459,26 +475,44 @@ class AgentBrowser {
   }
 
   /**
-   * Scroll the rendered range vertically.
+   * Navigate between pages — no renderer calls!
    * @param {'up'|'down'|'top'} direction - Scroll direction
-   * @param {number} [amount=1] - Number of renderHeights to scroll
-   * @returns {Promise<Object>} Updated render result
+   * @param {number} [amount=1] - Number of pages to scroll
+   * @returns {Promise<Object>} Current page data
    */
   async scroll(direction = 'down', amount = 1) {
-    // Scroll by one "page" = renderHeight
 
-    const delta = DEFAULT_RENDER_HEIGHT * amount;
-    if (direction === 'down') {
-      this.scrollY += delta;
+    const totalPages = this._paginationCache?.totalPages ?? (await this._ensurePagination()).totalPages;
+
+    if (direction === 'top') {
+      this.currentPage = 0;
+    } else if (direction === 'down') {
+      this.currentPage = Math.min(this.currentPage + amount, totalPages - 1);
     } else if (direction === 'up') {
-      this.scrollY = Math.max(0, this.scrollY - delta);
-    } else if (direction === 'top') {
-      this.scrollY = 0;
+      this.currentPage = Math.max(this.currentPage - amount, 0);
+    } else {
+      throw new Error(`Unknown scroll direction: ${direction}`);
     }
-    await this.page.evaluate((y) => window.scrollTo(0, y), this.scrollY);
-    await this.page.waitForTimeout(500);
-    return await this.snapshot();
+
+    console.debug(`[AgentBrowser] Navigated to page ${this.currentPage + 1 } / ${totalPages}`);
+
+    // ✅ Return current page *without* re-rendering
+    return this._paginationCache.pages[this.currentPage];
   }
+
+  /**
+   * Ensure pagination cache exists (lazy-init from lastResult)
+   * @returns {Object} { pages, totalPages }
+   */
+  async _ensurePagination() {
+    if (this._paginationCache) return this._paginationCache;
+    // If cache doesn’t exist but lastResult does, paginate on-demand
+    if (this.lastResult) {
+      this._paginationCache = this.paginateRender(this.lastResult, { linesPerPage: 150 });
+    }
+    return this._paginationCache;
+  }
+
 
   /**
    * Execute arbitrary JavaScript in page context.
@@ -786,6 +820,78 @@ class AgentBrowser {
     const el = this.lastResult.elements[ref];
     if (!el) throw new Error(`Element ref [${ref}] not found. Available: ${Object.keys(this.lastResult.elements).join(', ')}`);
     return el;
+  }
+
+  /**
+   * Paginate a markdown view by line count.
+   * For each page, extracts only the interactive refs that appear *in that page's text*.
+   *
+   * @param {Object} result - Full render result: { view, elements, meta, logs }
+   * @param {Object} [options={}]
+   * @param {number} [options.linesPerPage=150] - Lines per page
+   * @returns {{
+   *   pages: Array<{
+   *     view: string,
+   *     elements: Object,
+   *     meta: Object,
+   *     lineStart: number,
+   *     lineEnd: number,
+   *     linesTotal: number,
+   *     pageIdx: number,
+   *     totalPages: number,
+   *     refsInPage: number
+   *   }>,
+   *   totalPages: number
+   * }}
+   */
+  paginateRender(result, options = {}) {
+    const { linesPerPage = 150 } = options;
+
+    const { view, elements } = result;
+
+    // Normalize: split into lines (preserves empty lines for accuracy)
+    const lines = view.split('\n');
+
+    const pages = [];
+    const totalPages = Math.ceil(lines.length / linesPerPage);
+
+    for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+      const start = pageIdx * linesPerPage;
+      const end = Math.min(start + linesPerPage, lines.length);
+      const pageLines = lines.slice(start, end);
+      const pageMarkdown = pageLines.join('\n');
+
+      // Extract refs like <123> (after your final `@@REF(\d+)@@` → `<$1>` transform)
+      const refRegex = /<(\d+)>/g;
+      const pageElementIds = new Set();
+
+      let match;
+      while ((match = refRegex.exec(pageMarkdown)) !== null) {
+        pageElementIds.add(parseInt(match[1], 10));
+      }
+
+      // Build minimal element map for this page
+      const pageElements = {};
+      for (const id of pageElementIds) {
+        if (elements[id]) {
+          pageElements[id] = elements[id];
+        }
+      }
+
+      pages.push({
+        view: pageMarkdown,
+        elements: pageElements,
+        meta: result.meta,
+        lineStart: start,
+        lineEnd: end, // exclusive
+        linesTotal: lines.length,
+        pageIdx: pageIdx,
+        totalPages: totalPages,
+        refsInPage: pageElementIds.size
+      });
+    }
+
+    return { pages, totalPages };
   }
 
 }

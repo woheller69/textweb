@@ -128,7 +128,7 @@ const TOOLS = [
   },
   {
     name: 'textweb_scroll',
-    description: 'Scroll the page up or down. Returns the updated markdown text showing the new viewport position.',
+    description: 'Scroll the page up or down. Returns the updated markdown text for the new page.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -447,7 +447,7 @@ async function getBrowser(args = {}) {
 
 /**
  * Format a render result into a single-line or multi-line text suitable for MCP responses.
- * Includes URL, viewport, title, reference count, view, and interactive element list.
+ * Includes URL, visible range, title, reference count, view, and interactive element list.
  * @param {Object} result - Render result with `view`, `elements`, and `meta`
  * @returns {string} Formatted text
  */
@@ -456,7 +456,7 @@ function formatResult(result) {
     .map(([ref, el]) => `<${ref}> ${el.semantic}: ${el.text || '(no text)'}: ${el.href || "no link"}`)
     .join('\n');
 
-  return `URL: ${result.meta?.url || 'unknown'}\nVisible range (px): ${result.meta?.scrollY ?? 'unknown'} to ${result.meta?.scrollY+result.meta?.renderHeight || 'unknown'} of ${result.meta?.fullHeight || 'unknown'}\nTitle: ${result.meta?.title || 'unknown'}\nRefs: ${result.meta?.totalRefs || 0}\n\n${result.view}\n\nInteractive elements:\n${refs}`;
+  return `URL: ${result.meta?.url || 'unknown'}\nVisible range (page): ${result.pageIdx + 1} of ${result.totalPages}\nTitle: ${result.meta?.title || 'unknown'}\nRefs: ${result.refsInPage}\n\n${result.view}\n\nInteractive elements:\n${refs}`;
 }
 
 /**
