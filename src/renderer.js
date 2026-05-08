@@ -920,6 +920,15 @@ async function renderMarkdown(page, options = {}) {
             renderLog(`Skipping list ${list.className || list.tagName} inside table`);
             return false;
           }
+
+          // ✅ NEW: Skip lists inside EXCLUDED_SELECTORS (e.g., .devsite-nav-item)
+          for (const selector of EXCLUDED_SELECTORS) {
+            if (list.closest(selector)) {
+              renderLog(`Skipping list inside ${selector}: ${list.className || list.tagName}`);
+              return false;
+            }
+          }
+
           return hasPointerEvents(list);
         });
 
