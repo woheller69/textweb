@@ -103,24 +103,24 @@ textweb-mcp --host= --port=...
 
 The server exposes the following tools:
 
-| Tool | Description |
-|------|-------------|
+| Tool | Description                                                                                                                          |
+|------|--------------------------------------------------------------------------------------------------------------------------------------|
 | `textweb_ddg_search` | Search DuckDuckGo via HTTP POST (no browser). Returns up to 20 structured results (title, link, snippet). Optimized for reliability. |
-| `textweb_navigate` | Navigate to a URL and render the page as markdown with annotated interactive elements. Primary way to view web pages. |
-| `textweb_navigate_back` | Navigate back in browser history. |
-| `textweb_click` | Click an interactive element by its reference number. Returns updated markdown after the click. |
-| `textweb_type` | Type text into an input field by its reference number. Clears existing content and types the new text. |
-| `textweb_select` | Select an option from a dropdown/select element by its reference number. |
-| `textweb_scroll` | Scroll the page up or down (or to top). Returns updated markdown showing new viewport position. |
-| `textweb_snapshot` | Re-render the current page as markdown without navigating. Useful after waiting for dynamic content. |
-| `textweb_press` | Press a keyboard key (e.g., Enter, Tab, Escape, ArrowDown). Returns updated markdown. |
-| `textweb_session_list` | List active sessions and basic metadata (url, age). |
-| `textweb_session_close` | Close one session by session_id, or all sessions when `all=true`. |
-| `textweb_upload` | Upload a file to a file input element by its reference number. |
-| `textweb_storage_save` | Save current browser storage state (cookies/localStorage/sessionStorage) to disk for later restore. |
-| `textweb_storage_load` | Load storage state from disk into a fresh browser context. |
-| `textweb_wait_for` | Wait for UI state in multi-step flows. Supports selector text, and url_includes checks. |
-| `textweb_assert_field` | Assert a field value/text by element ref. Useful in multi-step forms before submitting. |
+| `textweb_navigate` | Navigate to a URL and render the page as markdown with annotated interactive elements. Primary way to view web pages.                |
+| `textweb_navigate_back` | Navigate back in browser history.                                                                                                    |
+| `textweb_click` | Click an interactive element by its reference number. Returns updated markdown after the click.                                      |
+| `textweb_type` | Type text into an input field by its reference number. Clears existing content and types the new text.                               |
+| `textweb_select` | Select an option from a dropdown/select element by its reference number.                                                             |
+| `textweb_scroll` | Scroll the page up or down (or top). Returns the updated markdown text for the new page.                                             |
+| `textweb_snapshot` | Re-render the current page as markdown without navigating. Useful after waiting for dynamic content.                                 |
+| `textweb_press` | Press a keyboard key (e.g., Enter, Tab, Escape, ArrowDown). Returns updated markdown.                                                |
+| `textweb_session_list` | List active sessions and basic metadata (url, age).                                                                                  |
+| `textweb_session_close` | Close one session by session_id, or all sessions when `all=true`.                                                                    |
+| `textweb_upload` | Upload a file to a file input element by its reference number.                                                                       |
+| `textweb_storage_save` | Save current browser storage state (cookies/localStorage/sessionStorage) to disk for later restore.                                  |
+| `textweb_storage_load` | Load storage state from disk into a fresh browser context.                                                                           |
+| `textweb_wait_for` | Wait for UI state in multi-step flows. Supports selector text, and url_includes checks.                                              |
+| `textweb_assert_field` | Assert a field value/text by element ref. Useful in multi-step forms before submitting.                                              |
 
 #### Usage Example
 With this your LLM can do things like:
@@ -133,3 +133,16 @@ type 1 password
 click 2
 
 ```
+
+
+## Donate
+<pre>Send a coffee to 
+woheller69@t-online.de 
+<a href= "https://www.paypal.com/signin"><img  align="left" src="https://www.paypalobjects.com/webstatic/de_DE/i/de-pp-logo-150px.png"></a>
+
+  
+Or via this link (with fees)
+<a href="https://www.paypal.com/donate?hosted_button_id=XVXQ54LBLZ4AA"><img  align="left" src="https://img.shields.io/badge/Donate%20with%20Debit%20or%20Credit%20Card-002991?style=plastic"></a></pre>
+
+## Credits
+https://github.com/chrisrobison/textweb

@@ -128,7 +128,7 @@ const TOOLS = [
   },
   {
     name: 'textweb_scroll',
-    description: 'Scroll the page up or down. Returns the updated markdown text for the new page.',
+    description: 'Scroll the page up or down (or top). Returns the updated markdown text for the new page.',
     inputSchema: {
       type: 'object',
       properties: {
