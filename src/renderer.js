@@ -169,12 +169,12 @@ async function renderMarkdown(page, options = {}) {
        * Used to populate the `elements` object returned in render result.
        *
        * ✅ NEW: Link deduplication — if this is a link and href already exists,
-       *         returns the existing nextRefId instead of incrementing.
-       *         Otherwise: allocates new nextRefId and returns it.
+       *         returns the existing refId instead of incrementing.
+       *         Otherwise: allocates new refId and returns it.
        *
        * @param {Object} item - Element data with properties like tag, selector, href, text, etc.
        * @param {Object} elementMap - Mutable map to register the ref entry
-       * @returns {number} nextRefId — either reused or newly allocated
+       * @returns {number} refId — either reused or newly allocated
        */
       function createElementMapEntry(item, elementMap) {
         const tag = item.tag;
@@ -195,7 +195,7 @@ async function renderMarkdown(page, options = {}) {
 
         // No duplicate — allocate new ID
 
-        const refIdNum = nextRefId++;
+        const refIdNum = Object.keys(elementMap).length;
         elementMap[refIdNum] = {
           selector: item.selector,
           tag: tag,
@@ -216,7 +216,7 @@ async function renderMarkdown(page, options = {}) {
           placeholder: item.placeholder || null,
           name: item.name || null,
           type: type || null,
-          refId: refIdNum // ✅ include nextRefId for traceability
+          refId: refIdNum // ✅ include refId for traceability
         };
 
         renderLog(`Assigned refId ${refIdNum} for ${tag} "${item.text?.substring(0, 20)}${item.text?.length > 20 ? '...' : ''}"`);
@@ -712,9 +712,6 @@ async function renderMarkdown(page, options = {}) {
        * Embed an interactive reference into target text using @@REFn@@ placeholder.
        * Tries regex match first, then optionally appends reference as fallback.
        *
-       * ✅ FIXED: No longer destructures `nextRefId` (which caused NaN).
-       * ✅ Uses `createElementMapEntry` which now handles link deduplication.
-       *
        * @param {string} targetText - The text to search/modify
        * @param {Object} item - The interactive item (must have `.text` property)
        * @param {Object} elementMap - Mutable map to register the ref entry
@@ -730,7 +727,7 @@ async function renderMarkdown(page, options = {}) {
         }
 
         const itemText = item.text.trim();
-        const refId = createElementMapEntry(item, elementMap); // ✅ Now returns the used nextRefId
+        const refId = createElementMapEntry(item, elementMap);
         const placeholder = `@@REF${refId}@@`;
 
         // Escape for LLM + regex safety
@@ -795,8 +792,7 @@ async function renderMarkdown(page, options = {}) {
       // ─── MAIN EXTRACT + RENDER LOGIC ──────────────────────────────────────────
       renderLog('Beginning DOM Extraction');
 
-      let nextRefId = 1;
-      const elementMap = {};
+      let elementMap = {};
       // 1. Collect interactives
       renderLog('Scanning interactive elements...');
       const allInteractives = [];
@@ -1251,8 +1247,42 @@ async function renderMarkdown(page, options = {}) {
         if (cleaned) markdown += cleaned + '\n\n';
       }
 
-      // Final global replace for embedded references:
-      markdown = markdown.replace(/@@REF(\d+)@@/g, '<$1>');
+      // Post-process: reassign reference IDs in order of appearance in markdown
+      const refMatches = [...markdown.matchAll(/@@REF(\d+)@@/g)].map(m => parseInt(m[1]));
+
+      if (refMatches.length > 0) {
+        // 1. Build mapping from old refId → new sequential ID (by first appearance in markdown)
+        const refToNewId = {};
+        let newId = 1;
+        const seen = new Set();
+        for (const oldRefId of refMatches) {
+          if (!seen.has(oldRefId)) {
+            seen.add(oldRefId);
+            refToNewId[oldRefId] = newId++;
+          }
+        }
+
+        // 2. Rebuild elementMap with new sequential IDs
+        const reorderedMap = {};
+        for (const [oldRefIdStr, element] of Object.entries(elementMap)) {
+          const oldRefId = parseInt(oldRefIdStr);
+          const newRefId = refToNewId[oldRefId];
+          if (newRefId !== undefined) {
+            reorderedMap[newRefId] = { ...element, refId: newRefId };
+          }
+        }
+
+        // 3. Replace placeholders using new sequential IDs
+        markdown = markdown.replace(/@@REF(\d+)@@/g, (match, oldRefIdStr) => {
+          const oldRefId = parseInt(oldRefIdStr);
+          const newRefId = refToNewId[oldRefId];
+          return `<${newRefId}>`;
+        });
+
+        // 4. Replace elementMap
+        elementMap = reorderedMap;
+      }
+
 
       // After all refs are embedded and markdown built...
       // Post-process elementMap to truncate safely:
@@ -1271,7 +1301,7 @@ async function renderMarkdown(page, options = {}) {
           scrollY,
           renderHeight: renderHeight ?? fullHeight,
           fullHeight,
-          totalRefs: nextRefId - 1,
+          totalRefs: Object.keys(elementMap).length,
           url: location.href,
           title: document.title
         },
