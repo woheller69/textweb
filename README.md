@@ -11,7 +11,7 @@ Instead of taking expensive screenshots and piping them through vision models, T
 npm install @playwright/test
 npm install playwright-extra puppeteer-extra-plugin-stealth cheerio
 npx playwright install chromium
-In case of missing dependencies (requires root): npx playwright install --with-deps chromium)
+In case of missing dependencies (requires root): npx playwright install --with-deps chromium
 
 git clone https://github.com/woheller69/textweb.git
 cd textweb/src
