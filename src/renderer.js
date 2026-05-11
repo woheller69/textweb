@@ -1,19 +1,24 @@
 /**
- * TextWeb Markdown Renderer v2.4 — Fully browser-safe with Synchronous Logging
+ * TextWeb Markdown Renderer v2.5 — Fully browser-safe with Synchronous Logging
  * Renders page to Markdown + element map entirely in browser context.
  */
 
 /**
- * Main export: render entire page
- * @param {import('playwright').Page} page - Playwright Page instance
+ * Renders the current page to a Markdown string and a map of interactive elements.
+ * Uses browser-native accessibility checks and viewport clipping to extract only visible content.
+ *
+ * @param {import('playwright').Page} page - Playwright Page instance (must be attached to a live page)
  * @param {Object} options - Rendering options
- * @param {number} [options.scrollY=0] - Vertical scroll position (in viewport pixels)
- * @param {number|null} [options.renderHeight=null] - Current render height; null means full page
+ * @param {number} [options.scrollY=window.scrollY] - Vertical scroll position (in document pixels)
+ * @param {number|null} [options.renderHeight=null] - Max vertical range to render (null = full page)
  * @returns {Promise<Object>} Render result:
  *   - view {string} – Markdown-formatted content
- *   - elements {Object<string,InteractiveElement>} – Map of interactive elements keyed by ref ID
+ *   - elements {Record<number, InteractiveElement>} – Map of interactive elements keyed by sequential ref ID
  *   - meta {Object} – Metadata: scrollY, renderHeight, fullHeight, totalRefs, url, title
- *   - logs {string} – Collected rendering logs
+ *   - logs {string} – Collected browser-side logs
+ *
+ * @example
+ * const result = await renderMarkdown(page, { scrollY: 0, renderHeight: 2000 });
  */
 
 async function renderMarkdown(page, options = {}) {
@@ -110,9 +115,11 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
-       * Check if an element is visible, has pointer events enabled, and is interactable via the mouse.
+       * Checks if an element is visually and functionally visible to users (per accessibility heuristics).
+       * Excludes AX-hidden, disabled, and CSS-hidden elements, and ensures non-zero size + pointer events.
+       *
        * @param {Element} el - DOM element to inspect
-       * @returns {boolean} true if element is visually and functionally visible
+       * @returns {boolean} `true` if element is visually and functionally visible
        */
       function hasPointerEvents(el) {
         // AX-tree exclusion (flag makes these deterministic)
@@ -714,46 +721,49 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
-       * Embed an interactive reference into target text using @@REFn@@ placeholder.
-       * Tries regex match first, then optionally appends reference as fallback.
+       * Embeds a reference placeholder (e.g., `@@REF5@@`) into `targetText` by matching `item.text`.
+       * Registers the interactive element in `elementMap`, reusing existing IDs for duplicate links.
        *
-       * @param {string} targetText - The text to search/modify
-       * @param {Object} item - The interactive item (must have `.text` property)
-       * @param {Object} elementMap - Mutable map to register the ref entry
+       * ⚠️ Side effect: Mutates `elementMap` immediately — do not rely on ID values until post-processing (see bottom of render loop).
+       *
+       * @param {string} targetText - Text to modify
+       * @param {Object} item - Interactive element data (must have `.text`, `.el`, `.tag`, etc.)
+       * @param {Object} elementMap - Mutable map of interactive elements
        * @param {Object} [options] - Options
-       * @param {boolean} [options.fallbackAppend=false] - Whether to append fallback if no regex match
-       * @returns {{text: string, matched: boolean}}
-       *   - text {string} Updated text (with reference or unchanged)
-       *   - matched {boolean} Whether regex matched the reference text
+       * @param {boolean} [options.fallbackAppend=false] - Append reference even on no-match
+       * @returns {{text: string, matched: boolean}} Updated text + match status
        */
       function embedInteractiveRef(targetText, item, elementMap, { fallbackAppend = false } = {}) {
         if (!item || !item.text?.trim()) {
           return { text: targetText, matched: false };
         }
 
-        const itemText = item.text.trim();
         const refId = createElementMapEntry(item, elementMap);
         const placeholder = `@@REF${refId}@@`;
 
-        // Escape for LLM + regex safety
-        const escapedItemText = escapeForLLM(itemText);
-        const safeText = escapedItemText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // ✅ Normalize both strings for reliable matching
+        const normItem = item.text.replace(/[\u00A0\s]+/g, ' ').trim().toLowerCase();
+        const normTarget = targetText.replace(/[\u00A0\s]+/g, ' ').trim().toLowerCase();
 
-        // Boundary-aware regex (matches word + common delimiters)
-        // ✅ Fixed: Removed \b boundaries. Expanded delimiter set to handle markdown escaping & HTML tags. The original \b (word boundary) fails in markdown/HTML contexts
+        // 1️⃣ Exact match (common for full-heading links or button labels)
+        if (normTarget === normItem) {
+          return { text: `${targetText}${placeholder}`, matched: true };
+        }
+
+        // 2️⃣ Boundary-aware regex
+        const safeText = normItem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
         const regex = new RegExp(`(^|[\\s(\\[<\\*\\_])(${safeText})([\\s.:;,!?)\\]>\\*\\_]|$)`, 'i');
-        const match = targetText.match(regex);
 
-        if (match) {
-          // Preserve surrounding context while injecting placeholder
-          targetText = targetText.replace(regex, `${match[1]}${match[2]}${placeholder}${match[3]}`);
+        if (regex.test(normTarget)) {
+          // $1, $2, $3 automatically capture from original targetText → preserves case & formatting
+          targetText = targetText.replace(regex, '$1$2' + placeholder + '$3');
           return { text: targetText, matched: true };
         }
 
-        // No match found
+        // Fallback append (if enabled)
         if (fallbackAppend) {
-          // Append reference at end as fallback
-          targetText = `${targetText}@@REF${refId}@@`;
+          targetText = `${targetText} ${placeholder}`;
         }
 
         return { text: targetText, matched: false };
