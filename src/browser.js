@@ -283,8 +283,7 @@ class AgentBrowser {
       const pagination = this.paginateRender(this.lastResult, { linesPerPage: 150 });
       this._paginationCache = pagination;
 
-
-      // ✅ Return *current* page, not always page 0
+      this.currentPage = 0; // ← RESET PAGE when taking snapshot
       const currentPageData = pagination.pages[this.currentPage];
 
       console.log(`  Current Page: ${currentPageData.pageIdx + 1}`);

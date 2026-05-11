@@ -115,31 +115,107 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
-       * Checks if an element is visually and functionally visible to users (per accessibility heuristics).
-       * Excludes AX-hidden, disabled, and CSS-hidden elements, and ensures non-zero size + pointer events.
+       * Checks if an element is *visually and functionally* visible to users (per layout heuristics).
+       * Includes ancestor-level checks for `display:none`, `overflow:hidden` clipping, transforms, etc.
+       * Also checks AX-hidden, disabled state, and CSS/rect constraints.
+       *
+       * This function *walks ancestors* to detect full layout invisibility.
+       *    Use this for DOM traversal pruning (e.g., skip hidden menus/accordions).
        *
        * @param {Element} el - DOM element to inspect
        * @returns {boolean} `true` if element is visually and functionally visible
        */
-      function hasPointerEvents(el) {
-        // AX-tree exclusion (flag makes these deterministic)
+      function isVisibleInLayout(el) {
+        if (!el || !el.nodeType || el.nodeType !== Node.ELEMENT_NODE) return false;
+
+        // 1. Quick exits for common ARIA/HTML attributes
+        if (el.hasAttribute('hidden')) return false;
         if (el.closest('[aria-hidden="true"]')) return false;
         if (el.getAttribute('aria-disabled') === 'true') return false;
+        if (el.closest('[inert]')) return false;
 
+        // 2. Immediate element-level checks
         const style = getComputedStyle(el);
-        const rect = el.getBoundingClientRect();
+        if (
+          style.display === 'none' ||
+          style.visibility === 'hidden' ||
+          parseFloat(style.opacity) === 0 ||
+          style.pointerEvents === 'none'
+        ) {
+          return false;
+        }
 
-        return (
-          style.display !== 'none' &&
-          style.visibility !== 'hidden' &&
-          parseFloat(style.opacity) > 0 &&
-          rect.width > 0 &&
-          rect.height > 0 &&
-          style.pointerEvents !== 'none' &&
-          // Legacy & modern visually-hidden patterns
-          !style.getPropertyValue('clip-path')?.includes('rect(0px 0px 0px 0px)') &&
-          style.clip !== 'rect(0px, 0px, 0px, 0px)'
-        );
+        // Check rect size early (avoids ancestor walk if element itself is zero-size)
+        const rect = el.getBoundingClientRect();
+        if (rect.width === 0 && rect.height === 0) return false;
+
+        // Legacy clip checks
+        if (
+          style.getPropertyValue('clip-path')?.includes('rect(0px 0px 0px 0px)') ||
+          style.clip === 'rect(0px, 0px, 0px, 0px)'
+        ) {
+          return false;
+        }
+
+        // 3. Ancestor walk (with performance optimization)
+        let ancestor = el.parentElement;
+        while (ancestor) {
+          // Stop at document root
+          if (ancestor.tagName.toLowerCase() === 'html') break;
+
+          const aStyle = getComputedStyle(ancestor);
+
+          // A. Ancestor is fully hidden
+          if (
+            aStyle.display === 'none' ||
+            aStyle.visibility === 'hidden' ||
+            parseFloat(aStyle.opacity) === 0
+          ) {
+            return false;
+          }
+
+          // B. Overflow clipping
+          if (
+            aStyle.overflow === 'hidden' ||
+            aStyle.overflowY === 'hidden' ||
+            aStyle.overflowX === 'hidden'
+          ) {
+            const aRect = ancestor.getBoundingClientRect();
+            // Re-get rect in case layout shifted? No, getBoundingClientRect is live.
+            // But we already have `rect` from above. Ensure it's still valid.
+            const elRect = el.getBoundingClientRect();
+
+            // Check if el is fully outside ancestor's clipped area
+            if (
+              elRect.top >= aRect.bottom ||
+              elRect.bottom <= aRect.top ||
+              elRect.right <= aRect.left ||
+              elRect.left >= aRect.right
+            ) {
+              return false;
+            }
+          }
+
+          // C. Transform check (only if transform is non-trivial)
+          const transform = aStyle.transform;
+          if (transform && transform !== 'none') {
+            // Optional: Add more sophisticated matrix analysis if needed
+            // For now, rely on window bounds check
+            const elRect = el.getBoundingClientRect();
+            if (
+              elRect.bottom < 0 ||
+              elRect.top > window.innerHeight ||
+              elRect.right < 0 ||
+              elRect.left > window.innerWidth
+            ) {
+              return false;
+            }
+          }
+
+          ancestor = ancestor.parentElement;
+        }
+
+        return true;
       }
 
       /**
@@ -357,7 +433,7 @@ async function renderMarkdown(page, options = {}) {
               const text = decodeHTML(extractTextWithSpaces(cell));
               const interactives = Array.from(
                 cell.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"]')
-              ).filter(el => hasPointerEvents(el) && isInteractiveElement(el));
+              ).filter(el => isVisibleInLayout(el) && isInteractiveElement(el));
 
               return {
                 text,
@@ -390,7 +466,7 @@ async function renderMarkdown(page, options = {}) {
         renderLog(`Found ${lis.length} direct <li> children in ${listEl.className || listEl.tagName}`);
 
         for (const li of lis) {
-          if (!hasPointerEvents(li)) continue;
+          if (!isVisibleInLayout(li)) continue;
 
           // ✅ Extract text while explicitly skipping nested list subtrees
           const text = extractTextExcludingNestedLists(li).trim();
@@ -404,7 +480,7 @@ async function renderMarkdown(page, options = {}) {
           // Collect interactives from the ORIGINAL li (not filtered)
           const interactives = Array.from(
             li.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"]')
-          ).filter(el => hasPointerEvents(el) && isInteractiveElement(el));
+          ).filter(el => isVisibleInLayout(el) && isInteractiveElement(el));
 
           items.push({ text, interactives });
         }
@@ -446,14 +522,9 @@ async function renderMarkdown(page, options = {}) {
           const parent = node.parentElement;
           if (!parent) continue;
 
-          // Skip invisible text (same checks as extractTextWithSpaces)
-          const style = getComputedStyle(parent);
-          if (
-            style.display === 'none' ||
-            style.visibility === 'hidden' ||
-            parseFloat(style.opacity) === 0 ||
-            parent.offsetParent === null
-          ) {
+          // Skip invisible text (use `isVisibleInLayout` on parent, not `getComputedStyle`)
+          // Note: We only need to guard for `offsetParent === null`, since `display:none` is already pruned
+          if (parent.offsetParent === null && getComputedStyle(parent).position !== 'fixed') {
             continue;
           }
 
@@ -506,7 +577,7 @@ async function renderMarkdown(page, options = {}) {
             const text = decodeHTML(extractTextWithSpaces(cell));
             const interactives = Array.from(
               cell.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"]')
-            ).filter(el => hasPointerEvents(el) && isInteractiveElement(el));
+            ).filter(el => isVisibleInLayout(el) && isInteractiveElement(el));
 
             if (!cellMap[rowIndex]) cellMap[rowIndex] = [];
             while (cellMap[rowIndex].length <= colIndex) cellMap[rowIndex].push(null);
@@ -543,7 +614,7 @@ async function renderMarkdown(page, options = {}) {
               const spanValue = cell.innerText.trim();
               const spanInteractives = Array.from(
                 cell.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"]')
-              ).filter(el => hasPointerEvents(el) && isInteractiveElement(el));
+              ).filter(el => isVisibleInLayout(el) && isInteractiveElement(el));
 
               for (let r = 1; r < rowspan; r++) {
                 const targetRow = rowIndex + r;
@@ -674,13 +745,10 @@ async function renderMarkdown(page, options = {}) {
               // Skip invisible or AX-hidden ancestors
               if (parent.closest('[aria-hidden="true"]')) return NodeFilter.FILTER_REJECT;
               // Skip invisible text
-              const style = getComputedStyle(parent);
-              if (
-                style.display === 'none' ||
-                style.visibility === 'hidden' ||
-                parseFloat(style.opacity) === 0 ||
-                (parent.offsetParent === null && style.position !== 'fixed')
-              ) return NodeFilter.FILTER_SKIP;
+              // (Still check offsetParent for non-fixed positioned elements as fallback)
+              if (parent.offsetParent === null && getComputedStyle(parent).position !== 'fixed') {
+                return NodeFilter.FILTER_SKIP;
+              }
 
               // Skip if inside any excluded selector (NEW)
               for (const sel of excludedSelectors) {
@@ -817,7 +885,7 @@ async function renderMarkdown(page, options = {}) {
         for (const selector of EXCLUDED_SELECTORS) {
             if (el.closest(selector)) return;
         }
-        if (!hasPointerEvents(el) || !isInteractiveElement(el)) return;
+        if (!isVisibleInLayout(el) || !isInteractiveElement(el)) return;
 
         const rect = el.getBoundingClientRect();
         const top = rect.top + window.scrollY;
@@ -940,7 +1008,7 @@ async function renderMarkdown(page, options = {}) {
             }
           }
 
-          return hasPointerEvents(list);
+          return isVisibleInLayout(list);
         });
 
       for (const listEl of allLists) {
@@ -982,7 +1050,7 @@ async function renderMarkdown(page, options = {}) {
       // ── Process div-based tables ────────────────────────────────────────────────
       renderLog('Processing DIV Tables');
       const allDivTableContainers = Array.from(document.querySelectorAll(TABLE_SELECTORS.join(', ')))
-        .filter(tc => hasPointerEvents(tc));
+        .filter(tc => isVisibleInLayout(tc));
 
       for (const tableContainer of allDivTableContainers) {
         if (processedDivTables.has(tableContainer)) continue;
@@ -1036,7 +1104,7 @@ async function renderMarkdown(page, options = {}) {
 
 
       for (const container of filteredContainers) {
-        if (!hasPointerEvents(container)) continue;
+        if (!isVisibleInLayout(container)) continue;
           // 👇 NEW: Detect and mark <pre> elements
         const isPre = container.tagName.toLowerCase() === 'pre';
         const text = extractTextWithSpaces(container, excludedForContainerText);
@@ -1079,7 +1147,7 @@ async function renderMarkdown(page, options = {}) {
             table.getAttribute('cellspacing') === '0') {
           continue;
         }
-        if (!hasPointerEvents(table)) continue;
+       if (!isVisibleInLayout(table)) continue;
         const rect = table.getBoundingClientRect();
         const top = rect.top + window.scrollY;
 
