@@ -197,7 +197,7 @@ class AgentBrowser {
     if (!this.browser) {
       this.browser = await chromium.launch({
         headless: this.headless,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        args: ['--no-sandbox', '--disable-setuid-sandbox',        '--force-renderer-accessibility'],
       });
     }
 

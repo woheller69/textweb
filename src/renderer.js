@@ -115,15 +115,23 @@ async function renderMarkdown(page, options = {}) {
        * @returns {boolean} true if element is visually and functionally visible
        */
       function hasPointerEvents(el) {
+        // AX-tree exclusion (flag makes these deterministic)
+        if (el.closest('[aria-hidden="true"]')) return false;
+        if (el.getAttribute('aria-disabled') === 'true') return false;
+
         const style = getComputedStyle(el);
         const rect = el.getBoundingClientRect();
+
         return (
           style.display !== 'none' &&
           style.visibility !== 'hidden' &&
           parseFloat(style.opacity) > 0 &&
           rect.width > 0 &&
           rect.height > 0 &&
-          style.pointerEvents !== 'none'
+          style.pointerEvents !== 'none' &&
+          // Legacy & modern visually-hidden patterns
+          !style.getPropertyValue('clip-path')?.includes('rect(0px 0px 0px 0px)') &&
+          style.clip !== 'rect(0px, 0px, 0px, 0px)'
         );
       }
 
@@ -139,16 +147,20 @@ async function renderMarkdown(page, options = {}) {
           return false;
         }
 
-        return (
-          el.tagName === 'A' ||
-          el.tagName === 'BUTTON' ||
-          el.tagName === 'INPUT' ||
-          el.tagName === 'SELECT' ||
-          el.tagName === 'TEXTAREA' ||
-          el.getAttribute('role') === 'button' ||
-          el.getAttribute('role') === 'link' ||
-          (el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1')
-        );
+        // Standard interactive tags
+        if (['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return true;
+
+        // ARIA roles & states
+        const role = (el.getAttribute('role') || '').toLowerCase();
+        const interactiveRoles = ['button', 'link', 'tab', 'checkbox', 'radio', 'slider', 'switch', 'menuitem', 'treeitem', 'gridcell', 'row'];
+        if (interactiveRoles.includes(role)) return true;
+
+        // Explicit tabindex (skip -1)
+        if (el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1') return true;
+
+        // ARIA state attributes that imply interactivity
+        const stateAttrs = ['aria-expanded', 'aria-pressed', 'aria-checked', 'aria-selected', 'aria-haspopup', 'aria-owns'];
+        return stateAttrs.some(attr => el.hasAttribute(attr));
       }
 
       /**
@@ -208,7 +220,7 @@ async function renderMarkdown(page, options = {}) {
           label: item.text,
           x: item.x, y: item.y, w: item.w, h: item.h,
           action: getAction(tag === 'a' ? 'link' : tag),
-          disabled: !!item.disabled,
+          disabled: !!item.disabled || item.el?.getAttribute('aria-disabled') === 'true',
           checked: tag === 'input' && ['checkbox', 'radio'].includes(type) ? item.checked || null : null,
           selected: tag === 'select' ? item.selected || null : null,
           required: !!item.required,
@@ -637,11 +649,12 @@ async function renderMarkdown(page, options = {}) {
       function extractTextWithSpaces(el, excludedSelectors = []) {
         const isPre = el.tagName.toLowerCase() === 'pre';
 
+        // Skip if hidden from AX tree
+        if (el.closest('[aria-hidden="true"]')) return '';
         // ✅ Use innerText for <pre> — it respects styling, newlines, indentation, and handles nested spans correctly
         if (isPre) {
           return el.innerText || '';
         }
-
         // ✅ Create TreeWalker with dynamic exclusion logic
         const walker = document.createTreeWalker(
           el,
@@ -649,25 +662,23 @@ async function renderMarkdown(page, options = {}) {
           {
             acceptNode: (node) => {
               const parent = node.parentElement;
-              if (!parent) return NodeFilter.FILTER_REJECT; // Safety
+              if (!parent) return NodeFilter.FILTER_REJECT;
 
-              // ✅ 1. Skip invisible text (original logic)
+              // Skip invisible or AX-hidden ancestors
+              if (parent.closest('[aria-hidden="true"]')) return NodeFilter.FILTER_REJECT;
+              // Skip invisible text
               const style = getComputedStyle(parent);
               if (
                 style.display === 'none' ||
                 style.visibility === 'hidden' ||
                 parseFloat(style.opacity) === 0 ||
-                parent.offsetParent === null
-              ) {
-                return NodeFilter.FILTER_SKIP;
-              }
+                (parent.offsetParent === null && style.position !== 'fixed')
+              ) return NodeFilter.FILTER_SKIP;
 
-              // ✅ 2. Skip if inside any excluded selector (NEW)
+              // Skip if inside any excluded selector (NEW)
               for (const sel of excludedSelectors) {
                 // Check if *any ancestor* matches the selector
-                if (parent.closest?.(sel)) {
-                  return NodeFilter.FILTER_REJECT; // Reject this subtree entirely
-                }
+                if (parent.closest?.(sel)) return NodeFilter.FILTER_REJECT; // Reject this subtree entirely
               }
 
               return NodeFilter.FILTER_ACCEPT;
@@ -677,18 +688,12 @@ async function renderMarkdown(page, options = {}) {
 
         const parts = [];
         let node;
-
         while ((node = walker.nextNode())) {
           const text = node.textContent;
-          if (text) {
-            parts.push(text);
-          }
+          if (text.trim()) parts.push(text);
         }
 
-        // ✅ Collapse whitespace for non-<pre> blocks
-        return parts.length === 0
-          ? ''
-          : parts.join(' ').trim();
+        return parts.length === 0 ? '' : parts.join(' ').trim();
       }
 
       /**
