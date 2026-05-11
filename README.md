@@ -2,7 +2,7 @@
 
 **A markdown web renderer for AI agents — see the web without screenshots.**
 
-Instead of taking expensive screenshots and piping them through vision models, TextWeb renders web pages as markdown that LLMs can reason about natively. Full JavaScript execution, spatial layout preserved, interactive elements annotated.
+Instead of taking expensive screenshots and piping them through vision models, TextWeb renders web pages as markdown that LLMs can reason about natively. Full JavaScript execution, interactive elements annotated.
 
 
 ## Quick Start
