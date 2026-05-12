@@ -418,7 +418,7 @@ async function renderMarkdown(page, options = {}) {
         const headerRow = tableContainer.querySelector('.tableHeader .row');
         if (headerRow) {
           Array.from(headerRow.querySelectorAll('.column')).forEach(cell => {
-            headers.push(decodeHTML(extractTextWithSpaces(cell)));
+            headers.push(normalizeTableCellText(decodeHTML(extractTextWithSpaces(cell))));
           });
         }
 
@@ -430,7 +430,7 @@ async function renderMarkdown(page, options = {}) {
           bodyRows.forEach(rowEl => {
             const cells = Array.from(rowEl.querySelectorAll('.column'));
             const rowData = cells.map(cell => {
-              const text = decodeHTML(extractTextWithSpaces(cell));
+              const text = normalizeTableCellText(decodeHTML(extractTextWithSpaces(cell)))
               const interactives = Array.from(
                 cell.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"]')
               ).filter(el => isVisibleInLayout(el) && isInteractiveElement(el));
@@ -541,8 +541,25 @@ async function renderMarkdown(page, options = {}) {
 
 
       /**
+       * Normalize text extracted from a *table cell*.
+       * - Collapses multiple spaces/newlines/tabs into single space
+       * - Trims edges
+       * - Does NOT affect <pre>, <code>, or non-cell content
+       * @param {string} text
+       * @returns {string}
+       */
+      function normalizeTableCellText(text) {
+        if (!text) return '';
+        return text
+          .replace(/[\t\n\r]+/g, ' ')  // tabs/newlines → space
+          .replace(/\s+/g, ' ')         // multiple spaces → single space
+          .trim();
+      }
+
+
+      /**
        * Parse HTML table structure into headers and rows with interactive references.
-       * Handles colspan/rowspan and deduplication of spanning cells.
+       * Handles colspan/rowspan generically — respects multi-column headers *and* multi-column rows.
        * @param {Element} table - Table DOM element
        * @returns {{ headers: string[], rows: CellData[][] }} Parsed table data
        */
@@ -554,34 +571,65 @@ async function renderMarkdown(page, options = {}) {
         const firstRow = table.querySelector('tr');
         if (!firstRow) return { headers: [], rows: [] };
 
-        // Check if first row contains <th> elements
+        // ── STEP 1: Determine max columns by scanning *all rows* for colspan ──
+        const tbody = table.querySelector('tbody') || table;
+        const trs = Array.from(tbody.children).filter(el => el.tagName === 'TR');
+
+        let maxCols = 0;
+        trs.forEach((tr, rowIndex) => {
+          const cols = Array.from(tr.children).filter(el => el.tagName === 'TD' || el.tagName === 'TH');
+          let colCount = 0;
+          cols.forEach(cell => {
+            const colspan = parseInt(cell.colSpan, 10) || 1;
+            const rowspan = parseInt(cell.rowSpan, 10) || 1;
+            colCount += colspan;
+            // Skip next (rowspan-1) rows for this cell's column
+            for (let r = 1; r < rowspan; r++) {
+              if (!trs[rowIndex + r]) continue;
+              // Mark cell as spanning — but don't increment colCount
+            }
+          });
+          if (colCount > maxCols) maxCols = colCount;
+        });
+
+        // ── STEP 2: Parse headers (if <th>) ──
         const hasTh = firstRow.querySelector('th') !== null;
 
         if (hasTh) {
-          // Use <th> cells as headers
-          firstRow.querySelectorAll('th').forEach(cell => {
-            headers.push(decodeHTML(extractTextWithSpaces(cell)));
+          // ✅ Fix: Expand headers respecting colspan
+          const headerCells = Array.from(firstRow.querySelectorAll('th'));
+          const expandedHeaders = new Array(maxCols).fill('');
+
+          let colIndex = 0;
+          headerCells.forEach(cell => {
+            const colspan = parseInt(cell.colSpan, 10) || 1;
+            const text = normalizeTableCellText(decodeHTML(extractTextWithSpaces(cell)));
+            // Fill first header slot with real text, others empty
+            expandedHeaders[colIndex] = text;
+            // Advance colIndex by colspan
+            colIndex += colspan;
           });
+          headers.push(...expandedHeaders);
         }
-        const tbody = table.querySelector('tbody') || table;
-        // Use .children + filter to only parse direct rows/cells (prevents nested table leakage)
-        const trs = Array.from(tbody.children).filter(el => el.tagName === 'TR');
+
+        // ── STEP 3: Parse rows — expand cells for colspan, store metadata ──
         const cellMap = [];
 
         trs.forEach((tr, rowIndex) => {
           const cols = Array.from(tr.children).filter(el => el.tagName === 'TD' || el.tagName === 'TH');
           let colIndex = 0;
 
+          if (!cellMap[rowIndex]) cellMap[rowIndex] = [];
+
           cols.forEach(cell => {
-            const { colspan = 1, rowspan = 1 } = cell;
-            const text = decodeHTML(extractTextWithSpaces(cell));
+            const colspan = parseInt(cell.colSpan, 10) || 1;
+            const rowspan = parseInt(cell.rowSpan, 10) || 1;
+            const text = normalizeTableCellText(decodeHTML(extractTextWithSpaces(cell)));
             const interactives = Array.from(
               cell.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"]')
             ).filter(el => isVisibleInLayout(el) && isInteractiveElement(el));
 
-            if (!cellMap[rowIndex]) cellMap[rowIndex] = [];
-            while (cellMap[rowIndex].length <= colIndex) cellMap[rowIndex].push(null);
-
+            // Store main cell at current colIndex
             cellMap[rowIndex][colIndex] = {
               text,
               interactives,
@@ -591,59 +639,51 @@ async function renderMarkdown(page, options = {}) {
               tag: cell.tagName.toLowerCase()
             };
 
+            // Fill subsequent columns (colspan-1) as "spanned"
             for (let c = 1; c < colspan; c++) {
               const targetCol = colIndex + c;
               if (!cellMap[rowIndex]) cellMap[rowIndex] = [];
               while (cellMap[rowIndex].length <= targetCol) cellMap[rowIndex].push(null);
-              cellMap[rowIndex][targetCol] = { text: '', interactives: [], isSpan: true };
+              cellMap[rowIndex][targetCol] = { text: '', interactives: [], isSpan: true, spanFrom: 'col' };
+            }
+
+            // Handle rowspan
+            for (let r = 1; r < rowspan; r++) {
+              const targetRow = rowIndex + r;
+              if (!cellMap[targetRow]) cellMap[targetRow] = [];
+              while (cellMap[targetRow].length <= colIndex) cellMap[targetRow].push(null);
+              cellMap[targetRow][colIndex] = {
+                text: '',
+                interactives: [],
+                isSpan: true,
+                spanFrom: 'row',
+                spanFromRow: rowIndex,
+                spanFromCol: colIndex,
+                spanValue: text,
+                spanInteractives: interactives
+              };
             }
 
             colIndex += colspan;
           });
         });
 
-        trs.forEach((tr, rowIndex) => {
-          const cols = Array.from(tr.children);
-          let colIndex = 0;
-
-          cols.forEach(cell => {
-            const { colspan = 1, rowspan = 1 } = cell;
-            if (rowspan > 1) {
-              const spanFromRow = rowIndex;
-              const spanFromCol = colIndex;
-              const spanValue = cell.innerText.trim();
-              const spanInteractives = Array.from(
-                cell.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"]')
-              ).filter(el => isVisibleInLayout(el) && isInteractiveElement(el));
-
-              for (let r = 1; r < rowspan; r++) {
-                const targetRow = rowIndex + r;
-                if (!cellMap[targetRow]) cellMap[targetRow] = [];
-                while (cellMap[targetRow].length <= spanFromCol) cellMap[targetRow].push(null);
-                cellMap[targetRow][spanFromCol] = {
-                  text: '',
-                  interactives: [],
-                  isSpan: true,
-                  spanFromRow,
-                  spanFromCol,
-                  spanValue,
-                  spanInteractives
-                };
-              }
-            }
-            colIndex += colspan;
-          });
-        });
-
-        cellMap.forEach(rowCells => {
+        // ── STEP 4: Convert cellMap → rows (ensuring all rows have maxCols) ──
+        cellMap.forEach((rowCells, rowIndex) => {
           if (!rowCells) return;
+
+          // Pad row to maxCols (if needed)
+          while (rowCells.length < maxCols) {
+            rowCells.push({ text: '', interactives: [], colSpan: 1, rowSpan: 1 });
+          }
+
           rows.push(rowCells.map(cell => {
             if (cell?.isSpan) {
               return {
-                text: cell.spanValue || '',
-                interactives: cell.spanInteractives || [],
-                colSpan: 1,
-                rowSpan: 1,
+                text: cell.spanValue || cell.text || '',
+                interactives: cell.spanInteractives || cell.interactives || [],
+                colSpan: cell.colSpan || 1,
+                rowSpan: cell.rowSpan || 1,
                 isSpan: true
               };
             }
@@ -653,6 +693,7 @@ async function renderMarkdown(page, options = {}) {
 
         return { headers, rows };
       }
+
 
       /**
        * * Renders table data into a compact Markdown table optimized for LLM consumption.
