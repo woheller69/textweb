@@ -1198,15 +1198,19 @@ async function renderMarkdown(page, options = {}) {
         );
         containerInteractives.forEach(item => usedInteractives.add(item.el));
 
+        const left = rect.left + window.scrollX;
+
         results.push({
           type: 'container',
           text,
           interactives: containerInteractives,
           y: top,
+          x: left,
           tag: container.tagName.toLowerCase(),
           isHeading: /^H[1-6]$/.test(container.tagName),
           headingLevel: container.tagName.match(/^H(\d)$/)?.[1] || null,
-          isPre: isPre
+          isPre: isPre,
+          isPartOfDivTable: false // ← add this
         });
       }
 
@@ -1308,6 +1312,149 @@ async function renderMarkdown(page, options = {}) {
 
       renderLog(`Rendering Markdown (Total items: ${unique.length})`);
 
+      // ─── DETECT & RENDER TABLES FROM CONTAINER CLUSTERS ──────────────────────────────────
+      // Step 1: Group containers by exact y (not rounded!) to find column groups
+      const yGroups = {};
+      for (const item of unique) {
+        if (item.type === 'container' && item.y != null) {
+          const y = Math.floor(item.y);
+          if (!yGroups[y]) yGroups[y] = [];
+          yGroups[y].push(item);
+        }
+      }
+
+      renderLog(`Found ${Object.keys(yGroups).length} unique y positions for containers`);
+
+      // Find groups that could be table columns (≥4 items = typical 4-column layout)
+      const potentialRows = [];
+      for (const [yStr, group] of Object.entries(yGroups)) {
+        if (group.length >= 4) {
+          const sorted = [...group].sort((a, b) => a.x - b.x); // sort by x to get column order
+          potentialRows.push(sorted);
+          renderLog(`Potential column group at y=${yStr}: ${group.length} items, xs=[${sorted.map(c=>Math.round(c.x)).join(', ')}]`);
+        }
+      }
+
+      // ─── DETECT TABLES WITH FLEXIBLE Y-GAP ───────────────────────────────────────────
+      const detectedTables = [];
+      const processedLayouts = new Set();
+
+      for (const row of potentialRows) {
+        const layoutKey = row.map(c => Math.round(c.x)).join('|');
+        if (processedLayouts.has(layoutKey)) continue;
+        processedLayouts.add(layoutKey);
+
+        const firstY = row[0].y;
+        const firstXs = row.map(c => Math.round(c.x));
+
+        // Scan forward for rows with same layout
+        const tableRows = [row];
+        let prevY = firstY;
+
+        // Scan all y groups (removed 400px limit)
+        for (const [yStr, group] of Object.entries(yGroups)) {
+          const y = Number(yStr);
+          if (y <= prevY) continue;
+
+          // Allow larger gaps (e.g., 100px), but skip if too large (likely a new section)
+          const deltaY = y - prevY;
+          if (deltaY > 100) continue;
+
+          if (group.length !== row.length) continue;
+
+          const candidateRow = [...group].sort((a, b) => a.x - b.x);
+          const candidateXs = candidateRow.map(c => Math.round(c.x));
+
+          // Check alignment: same #cols, same x positions (±5px)
+          const aligned = candidateXs.every((x, i) => Math.abs(x - firstXs[i]) <= 5);
+
+          if (aligned) {
+            // Consider this a continuation of the table
+            tableRows.push(candidateRow);
+            prevY = y;
+          }
+          for (const row of tableRows) {
+            for (const cell of row) {
+              cell.isPartOfDivTable = true; // ← add this
+            }
+          }
+        }
+
+        // Commit if ≥2 rows
+        if (tableRows.length >= 2) {
+          renderLog(`✅ Detected div-based table: ${tableRows.length} rows × ${row.length} cols at y=${firstY}`);
+
+          // Embed interactives directly into cell text
+          const rows = tableRows.map((row, rowIndex) => {
+            return row.map(cell => {
+              let cellText = cell.text || '';
+              const interactives = [...cell.interactives];
+
+              // Embed references for each interactive
+              for (const item of interactives) {
+                const { text: updatedText } = embedInteractiveRef(
+                  cellText,
+                  item,
+                  elementMap,
+                  { fallbackAppend: false } // no fallback — we want it embedded
+                );
+                cellText = updatedText;
+              }
+
+              return {
+                text: normalizeTableCellText(cellText),
+                interactives: []
+              };
+            });
+          });
+
+          // MARK AS USED — prevents double-embedding in orphans
+          const tableInteractives = tableRows.flat().map(c => c.interactives).flat();
+          for (const item of tableInteractives) {
+            usedInteractives.add(item.el);
+          }
+
+          const tableData = {
+            headers: [], // force all rows as body
+            rows: rows
+          };
+
+          detectedTables.push({
+            type: 'table',
+            y: firstY,
+            data: tableData,
+            interactives: [], // already embedded
+            selector: 'div[data-detect="div-table"]'
+          });
+
+          renderLog(`Embedded refs in ${tableRows.length} rows`);
+        }
+      }
+
+      // Remove leaf containers that are part of detected tables
+      const rowsToRemoveSet = new Set();
+      if (detectedTables.length > 0) {
+        for (const table of detectedTables) {
+          for (const row of table.data.rows) {
+            for (const cell of row) {
+              for (const item of unique) {
+                if (item.type === 'container' && item.text?.trim() === cell.text?.trim()) {
+                  rowsToRemoveSet.add(item);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Replace: keep only non-table containers + tables
+      const uniqueFiltered = unique.filter(item => !rowsToRemoveSet.has(item));
+      unique.length = 0;
+      unique.push(...detectedTables);
+      unique.push(...uniqueFiltered);
+
+      // ─── END TABLE DETECTION ────────────────────────────────────────────────────────────
+
       // Final render inside browser
       let markdown = '';
 
@@ -1375,6 +1522,8 @@ async function renderMarkdown(page, options = {}) {
         // ── Standard paragraph with embedded references ────────────────────────
         let text = escapeForLLM(p.text || '');
         if (!text) continue;
+
+        if (p.isPartOfDivTable) continue; // ← add this
 
         if (p.interactives.length > 0) {
 
