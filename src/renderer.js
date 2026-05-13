@@ -1,5 +1,5 @@
 /**
- * TextWeb Markdown Renderer v2.5 — Fully browser-safe with Synchronous Logging
+ * TextWeb Markdown Renderer v2.6 — Fully browser-safe with Synchronous Logging
  * Renders page to Markdown + element map entirely in browser context.
  */
 
@@ -79,7 +79,7 @@ async function renderMarkdown(page, options = {}) {
 
       // ─── ALL HELPER FUNCTIONS (browser context) ─────────────────────────────
 
-      const INCLUDED_SELECTORS = 'p, figcaption, dt, dd, blockquote, h1, h2, h3, h4, h5, h6, div, pre';
+      const INCLUDED_SELECTORS = ['p', 'figcaption', 'dt', 'dd', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'pre'];
 
       const EXCLUDED_SELECTORS = [  //Exclude these, if they are inside INCLUDED_SELECTORS
           '.devsite-nav-item'              // Ignore devsite navigation items (Android Developer pages)
@@ -219,31 +219,34 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
-       * Determine whether an element is considered an interactive candidate
-       * (i.e., likely triggers UI interaction or navigation).
-       * @param {Element} el - DOM element
-       * @returns {boolean} true if element matches known interactive element types
+       * Determines whether a DOM element is *functionally interactive* — i.e., likely triggers navigation or UI actions.
+       * Checks standard interactive tags (A, BUTTON, etc.), ARIA roles/attributes, explicit tabindex, and behavioral clues
+       * (onclick, aria-expanded/pressed/checked). Note: does NOT treat SPAN as interactive by default unless it has onclick/ARIA.
+       *
+       * @param {Element} el - DOM element to inspect
+       * @returns {boolean} true if element is likely interactive to users (e.g., clickable, focusable, or state-changing)
        */
       function isInteractiveElement(el) {
-        // Exclude 'SPAN' as interactive element. May cause issues if span used as clickable element
-        if (['SPAN'].includes(el.tagName)) {
-          return false;
-        }
+        // 1. Standard interactive tags
+        const standardTags = ['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'];
+        if (standardTags.includes(el.tagName)) return true;
 
-        // Standard interactive tags
-        if (['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return true;
-
-        // ARIA roles & states
+        // 2. ARIA roles (this covers SPAN/DIV with role="button")
         const role = (el.getAttribute('role') || '').toLowerCase();
         const interactiveRoles = ['button', 'link', 'tab', 'checkbox', 'radio', 'slider', 'switch', 'menuitem', 'treeitem', 'gridcell', 'row'];
         if (interactiveRoles.includes(role)) return true;
 
-        // Explicit tabindex (skip -1)
+        // 3. Explicit tabindex (skip -1)
         if (el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1') return true;
 
-        // ARIA state attributes that imply interactivity
-        const stateAttrs = ['aria-expanded', 'aria-pressed', 'aria-checked', 'aria-selected', 'aria-haspopup', 'aria-owns'];
-        return stateAttrs.some(attr => el.hasAttribute(attr));
+        // 4. Behavioral clues (for SPAN/DIV)
+        // Check if it has an inline onclick or is a common clickable pattern
+        const hasOnClick = el.hasAttribute('onclick');
+        const hasAriaState = ['aria-expanded', 'aria-pressed', 'aria-checked', 'aria-selected', 'aria-haspopup'].some(attr => el.hasAttribute(attr));
+
+        if (hasOnClick || hasAriaState) return true;
+
+        return false;
       }
 
       /**
@@ -979,55 +982,84 @@ async function renderMarkdown(page, options = {}) {
       // ── Collect and filter containers ────────────────────────────────────────────
       renderLog('Processing containers');
 
-      const allContainers = Array.from(document.querySelectorAll(INCLUDED_SELECTORS));
-      const filteredContainers = allContainers.filter((el) => {
-        // 1. Remove containers that *contain other matched elements* (keep leaf nodes)
-        //    e.g., if <div> contains <p>, keep only <p>, not the wrapper <div>
-        if (allContainers.some((other) => other !== el && el.contains(other))) {
-          return false;
+      const allContainers = Array.from(document.querySelectorAll(INCLUDED_SELECTORS.join(', ')));
+      const filteredContainers = [];
+
+      // Optimization: Create a Set of all elements we are interested in for O(1) lookups
+      const includedSelectorSet = new Set(allContainers);
+
+      for (const el of allContainers) {
+        // --- STEP 1: LEAF-NODE STRATEGY (Prevent Text Duplication) ---
+        // We only want the "deepest" elements. If this element contains
+        // another element that is ALSO in our INCLUDED_SELECTORS, we skip this one.
+        // This prevents a <div> containing a <p> from being rendered twice.
+
+        const descendants = el.querySelectorAll(INCLUDED_SELECTORS.join(', '));
+        if (descendants.length > 0) {
+          continue;
         }
 
-        // 2. ✅ Exclude semantic tables
-        if (el.tagName.toLowerCase() === 'table') return false;
+        // --- STEP 2: VISIBILITY CHECK ---
+        if (!isVisibleInLayout(el)) {
+          continue;
+        }
 
-        // 3. ✅ Exclude div-based tables: either via TABLE_SELECTORS OR if it contains a <table>
-        if (el.tagName.toLowerCase() === 'div') {
-          // First: explicit selectors (e.g., .tableContainer)
+        // --- STEP 3: SEMANTIC EXCLUSIONS ---
+        const tagName = el.tagName.toLowerCase();
+
+        // 3a. Exclude semantic tables
+        if (tagName === 'table') {
+          continue;
+        }
+
+        // 3b. Exclude div-based tables
+        if (tagName === 'div') {
+          let isDivTable = false;
           for (const selector of TABLE_SELECTORS) {
-            if (el.matches(selector)) return false;
-            if (el.closest(selector)) return false;
+            if (el.matches(selector) || el.closest(selector)) {
+              isDivTable = true;
+              break;
+            }
           }
-
-          // ✅ NEW: Also exclude divs that *contain* a semantic <table>
-          if (el.querySelector('table')) return false;
+          if (isDivTable || el.querySelector('table')) {
+            continue;
+          }
         }
 
-        // 4. ✅ Keep containers *even if* they contain lists/tables — we'll exclude list/table text during extraction
-        //    So: DO NOT exclude containers just because they have a list/table inside
-
-        // 5. ✅ Existing exclusions: ads, nav items, etc.
+        // 3c. Exclude known unwanted areas (ads, nav, etc.)
+        let isExcluded = false;
         for (const selector of EXCLUDED_SELECTORS) {
-          if (el.closest(selector)) return false;
+          if (el.closest(selector)) {
+            isExcluded = true;
+            break;
+          }
+        }
+        if (isExcluded) continue;
+
+        // 3d. Skip containers inside semantic tables
+        if (el.closest('table')) {
+          continue;
         }
 
-        // 6. ✅ Skip containers inside semantic tables (double-check)
-        if (el.closest('table')) return false;
-
-        // 7. ✅ Skip if *only* contains lists/tables AND has no meaningful text on its own
-        if (el.tagName.toLowerCase() === 'div' || el.tagName.toLowerCase() === 'section') {
+        // 3e. Skip empty wrapper containers
+        if (tagName === 'div' || tagName === 'section') {
           const textWithoutListsTables = extractTextWithSpaces(el, [
             ...LIST_SELECTORS,
             ...TABLE_SELECTORS
           ]);
 
           if (!textWithoutListsTables.trim()) {
-            renderLog(`Skipping wrapper container ${el.className || ''} (no non-list/table text)`);
-            return false;
+            continue;
           }
         }
 
-        return true;
-      });
+        // --- STEP 4: SUCCESS ---
+        // If we reached here, the element is a visible, non-table, non-excluded,
+        // non-parent leaf node.
+        filteredContainers.push(el);
+      }
+
+
 
 
       // ── Process Lists (Independent of INCLUDED_SELECTORS) ─────────────────────
@@ -1249,25 +1281,29 @@ async function renderMarkdown(page, options = {}) {
       // Deduplicate, but preserve all tables
       renderLog('Deduplicating results');
       const unique = [];
+      // Use a Map to store fingerprints: key = hash(text + y + link), value = true
+      const seenFingerprints = new Set();
+
       for (const item of results) {
-        // Always include tables — never deduplicate them
+        // Always include all tables
         if (item.type === 'table') {
           unique.push(item);
           continue;
         }
 
-        const isDuplicate = unique.some(u => {
-          // Skip comparison with tables
-          if (u.type === 'table') return false;
+        // Create a unique fingerprint for the item
+        // We combine text, vertical position (rounded to 10px to allow slight shifts), and the primary link
+        const textKey = (item.text || '').trim().toLowerCase();
+        const yKey = Math.round(item.y / 20) * 20;
+        const linkKey = item.interactives[0]?.href || '';
+        const fingerprint = `${textKey}|${yKey}|${linkKey}`;
 
-          // For containers/orphans: same text, vertical proximity, same link
-          const sameText = u.text === item.text;
-          const closeVertically = Math.abs(u.y - item.y) < 50;
-          const sameLink = u.interactives[0]?.href === item.interactives[0]?.href;
-          return sameText && closeVertically && sameLink;
-        });
-
-        if (!isDuplicate) unique.push(item);
+        if (!seenFingerprints.has(fingerprint)) {
+          seenFingerprints.add(fingerprint);
+          unique.push(item);
+        } else {
+          renderLog(`Skipping duplicate item: ${textKey.substring(0, 20)}`);
+        }
       }
 
       renderLog(`Rendering Markdown (Total items: ${unique.length})`);
