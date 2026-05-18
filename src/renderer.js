@@ -704,63 +704,68 @@ async function renderMarkdown(page, options = {}) {
 
 
       /**
-       * * Renders table data into a compact Markdown table optimized for LLM consumption.
-       *  * Uses symmetric delimiters ( | ) for clarity while minimizing token usage.
+       * Renders table data into a compact Markdown table optimized for LLM consumption.
+       * Uses symmetric delimiters ( | ) for clarity while minimizing token usage.
        *
        * Unlike human-focused renderers, this function minimizes token usage by:
        * 1. Removing trailing whitespace (no `padEnd` on cells).
        * 2. Using a fixed minimum separator length (3 dashes) instead of dynamic column width.
        * 3. Simplifying alignment logic to standard `---` (left-aligned) unless specific types require it.
        *
+       * ✅ NEW: Skip header + separator row if *all* headers are empty/null/whitespace.
        * @param {{ headers: string[], rows: CellData[][] }} tableData - Table structure from parseTableStructure
        * @returns {string} Markdown table string
        */
       function renderTableLLMOptimized(tableData) {
         const { headers, rows } = tableData;
 
-        // Quick check for empty data
-        if (!headers.length && (!rows || !rows.length)) return '';
+        // Quick exit for empty tables
+        if (!headers?.length && (!rows || !rows.length)) return '';
 
-        // Determine the number of columns based on the longest row
+        // Determine number of columns (max of headers or any row)
         const cols = Math.max(
           headers.length,
-          rows ? Math.max(...rows.map(r => r.length || 0)) : 0
+          rows ? Math.max(...rows.map(r => r?.length || 0)) : 0
         );
 
-        // Ensure headers have enough columns
+        // Pad headers to match column count
         while (headers.length < cols) headers.push('');
 
-        // Ensure rows have enough columns and fill with default objects if necessary
-        // (Preserving the structure of your original logic for safety)
-        rows.forEach(row => {
+        // Ensure all rows have enough columns
+        rows?.forEach(row => {
           while (row.length < cols) {
             row.push({ text: '', interactives: [], colSpan: 1, rowSpan: 1 });
           }
         });
 
-        // Calculate minimum width for each column (just enough to fit content)
-        const colWidths = new Array(cols).fill(3); // Min width of 3 for separator
-
-        headers.forEach((h, i) => colWidths[i] = Math.max(colWidths[i], h.length));
-        rows.forEach(row => {
-          row.forEach((cell, i) => {
-            colWidths[i] = Math.max(colWidths[i], (cell.text || '').length);
-          });
+        // ✅ Check if *all* headers are effectively empty (skip header row)
+        const hasHeader = headers.some(h => {
+          const normalized = (h || '').trim();
+          return normalized.length > 0;
         });
 
-        // 1. Header Row: No trailing spaces
-        const hRow = '| ' + headers.map((h, i) => h).join(' | ') + ' |';
+        // Prepare rows — escape text for Markdown/LLM
+        const bodyRows = rows?.map(row =>
+          '| ' + row.map((cell, i) => escapeForLLM(cell.text || '')).join(' | ') + ' |'
+        ) || [];
 
-        // 2. Separator Row: Fixed 3 dashes for all columns to save tokens
-        // (No dynamic alignment logic unless explicitly required)
+        if (!hasHeader) {
+          // No headers → render only body, *without* header row or separator
+          return bodyRows.length ? `\n\n${bodyRows.join('\n')}\n` : '';
+        }
+
+        // ✅ Render with header + separator (only if headers exist)
+        // Calculate column widths (min 3 for separator)
+        const colWidths = new Array(cols).fill(3);
+        headers.forEach((h, i) => colWidths[i] = Math.max(colWidths[i], (h || '').length));
+        rows?.forEach(row => {
+          row.forEach((cell, i) => colWidths[i] = Math.max(colWidths[i], (cell.text || '').length));
+        });
+
+        // Build header row and separator
+        const hRow = '| ' + headers.join(' | ') + ' |';
         const sepRow = '| ' + colWidths.map(() => '---').join(' | ') + ' |';
 
-        // 3. Body Rows: No trailing spaces, escape special characters
-        const bodyRows = rows.map(row =>
-          '| ' + row.map((cell, i) => escapeForLLM(cell.text || '')).join(' | ') + ' |'
-        );
-
-        // Return with standard Markdown spacing
         return `\n\n${hRow}\n${sepRow}\n${bodyRows.join('\n')}\n`;
       }
 
