@@ -1322,147 +1322,177 @@ async function renderMarkdown(page, options = {}) {
       }
 
       // Heuristic analysis
-      // ─── DETECT & RENDER TABLES FROM CONTAINER CLUSTERS ──────────────────────────────────
-      // Step 1: Group containers by exact y (not rounded!) to find column groups
-      // TODO: add +/-10 pixels tolerance in y-direction, and/or compare nested depth, common ancestors, etc
-      const yGroups = {};
-      for (const item of unique) {
-        if (item.type === 'container' && item.y != null) {
-          const y = Math.floor(item.y);
-          if (!yGroups[y]) yGroups[y] = [];
-          yGroups[y].push(item);
-        }
-      }
-
-      renderLog(`Found ${Object.keys(yGroups).length} unique y positions for containers`);
-
-      // Find groups that could be table columns (≥4 items = typical 4-column layout)
-      const potentialRows = [];
-      for (const [yStr, group] of Object.entries(yGroups)) {
-        if (group.length >= 4) {
-          const sorted = [...group].sort((a, b) => a.x - b.x); // sort by x to get column order
-          potentialRows.push(sorted);
-          renderLog(`Potential column group at y=${yStr}: ${group.length} items, xs=[${sorted.map(c=>Math.round(c.x)).join(', ')}]`);
-        }
-      }
-
-      // ─── DETECT TABLES WITH FLEXIBLE Y-GAP ───────────────────────────────────────────
+      // ─── DETECT & RENDER TABLES FROM CONTAINER CLUSTERS (Robust Iterative) ───────────────
       const detectedTables = [];
-      const processedLayouts = new Set();
+      let remainingContainers = [...unique]; // Working copy
 
-      for (const row of potentialRows) {
-        const layoutKey = row.map(c => Math.round(c.x)).join('|');
-        if (processedLayouts.has(layoutKey)) continue;
-        processedLayouts.add(layoutKey);
+      // Keep extracting tables until none left
+      while (true) {
+        // Step 1: Rebuild yGroups from remaining containers
+        const yGroups = {};
+        for (const item of remainingContainers) {
+          if (item.type === 'container' && item.y != null) {
+            const y = Math.floor(item.y);
+            if (!yGroups[y]) yGroups[y] = [];
+            yGroups[y].push(item);
+          }
+        }
 
-        const firstY = row[0].y;
-        const firstXs = row.map(c => Math.round(c.x));
-
-        // Scan forward for rows with same layout
-        const tableRows = [row];
-        let prevY = firstY;
-
-        // Scan all y groups (removed 400px limit)
+        // Step 2: Find potential column groups (≥4 items)
+        const potentialRows = [];
         for (const [yStr, group] of Object.entries(yGroups)) {
-          const y = Number(yStr);
-          if (y <= prevY) continue;
-
-          // Allow larger gaps (e.g., 100px), but skip if too large (likely a new section)
-          const deltaY = y - prevY;
-          if (deltaY > 100) continue;
-
-          if (group.length !== row.length) continue;
-
-          const candidateRow = [...group].sort((a, b) => a.x - b.x);
-          const candidateXs = candidateRow.map(c => Math.round(c.x));
-
-          // Check alignment: same #cols, same x positions (±5px)
-          const aligned = candidateXs.every((x, i) => Math.abs(x - firstXs[i]) <= 5);
-
-          if (aligned) {
-            // Consider this a continuation of the table
-            tableRows.push(candidateRow);
-            prevY = y;
+          if (group.length >= 4) {
+            const sorted = [...group].sort((a, b) => a.x - b.x);
+            potentialRows.push(sorted);
           }
-          for (const row of tableRows) {
-            for (const cell of row) {
-              cell.isPartOfDivTable = true; // ← add this
+        }
+
+        if (potentialRows.length === 0) break; // No candidate rows left
+
+        // Step 3: Find the *best* table candidate (first aligned group ≥2 rows)
+        const processedLayouts = new Set();
+        let bestTableCandidate = null;
+
+        for (const row of potentialRows) {
+          const layoutKey = row.map(c => Math.round(c.x)).join('|');
+          if (processedLayouts.has(layoutKey)) continue;
+          processedLayouts.add(layoutKey);
+
+          const firstY = row[0].y;
+          const firstXs = row.map(c => Math.round(c.x));
+
+          // Scan forward for rows with same layout
+          const tableRows = [row];
+          let prevY = firstY;
+
+          const yPositions = Object.keys(yGroups).map(Number).filter(y => y > prevY).sort((a, b) => a - b);
+
+          // Track gaps for adaptive threshold
+          const gaps = [];
+
+          for (const y of yPositions) {
+            const group = yGroups[y];
+            if (!group) continue;
+
+            const deltaY = y - prevY;
+
+            // ✅ Adaptive gap check
+            const avgGap = tableRows.length > 1
+              ? gaps.reduce((sum, g) => sum + g, 0) / gaps.length
+              : 0;
+
+            const maxAllowedGap = avgGap === 0 ? 100 : avgGap * 3; // fallback: generous if no prior gaps
+            if (deltaY > maxAllowedGap) {
+              renderLog(`Stopped scanning at y=${y}: gap ${deltaY.toFixed(1)} > ${maxAllowedGap.toFixed(1)} (avg=${avgGap.toFixed(1)})`);
+              break;
+            }
+
+            // If we passed the gap check, proceed with alignment check
+            if (group.length !== row.length) continue;
+
+            const candidateRow = [...group].sort((a, b) => a.x - b.x);
+            const candidateXs = candidateRow.map(c => Math.round(c.x));
+
+            const aligned = candidateXs.every((x, i) => Math.abs(x - firstXs[i]) <= 5);
+            if (aligned) {
+              // ✅ Accept row and log gap
+              gaps.push(deltaY);
+              tableRows.push(candidateRow);
+              prevY = y;
+              renderLog(`Added row at y=${y} (gap=${deltaY.toFixed(1)}, avg=${avgGap.toFixed(1)})`);
             }
           }
-        }
 
-        // Commit if ≥2 rows
-        if (tableRows.length >= 2) {
-          renderLog(`✅ Detected div-based table: ${tableRows.length} rows × ${row.length} cols at y=${firstY}`);
-
-          // Embed interactives directly into cell text
-          const rows = tableRows.map((row, rowIndex) => {
-            return row.map(cell => {
-              let cellText = cell.text || '';
-              const interactives = [...cell.interactives];
-
-              // Embed references for each interactive
-              for (const item of interactives) {
-                const { text: updatedText } = embedInteractiveRef(
-                  cellText,
-                  item,
-                  elementMap,
-                  { fallbackAppend: false } // no fallback — we want it embedded
-                );
-                cellText = updatedText;
-              }
-
-              return {
-                text: normalizeTableCellText(cellText),
-                interactives: []
-              };
-            });
-          });
-
-          // MARK AS USED — prevents double-embedding in orphans
-          const tableInteractives = tableRows.flat().map(c => c.interactives).flat();
-          for (const item of tableInteractives) {
-            usedInteractives.add(item.el);
+          // Commit if ≥2 rows
+          if (tableRows.length >= 2) {
+            bestTableCandidate = {
+              tableRows,
+              firstY,
+              firstXs
+            };
+            break; // Found the first complete table — stop searching
           }
-
-          const tableData = {
-            headers: [], // force all rows as body
-            rows: rows
-          };
-
-          detectedTables.push({
-            type: 'table',
-            y: firstY,
-            data: tableData,
-            interactives: [], // already embedded
-            selector: 'div[data-detect="div-table"]'
-          });
-
-          renderLog(`Embedded refs in ${tableRows.length} rows`);
         }
-      }
 
-      // Remove leaf containers that are part of detected tables
-      const rowsToRemoveSet = new Set();
-      if (detectedTables.length > 0) {
-        for (const table of detectedTables) {
-          for (const row of table.data.rows) {
-            for (const cell of row) {
-              for (const item of unique) {
-                if (item.type === 'container' && item.text?.trim() === cell.text?.trim()) {
-                  rowsToRemoveSet.add(item);
-                }
-              }
+        if (!bestTableCandidate) break; // No valid tables left in this pass
+
+        const { tableRows, firstY } = bestTableCandidate;
+
+        // Step 4: Build table data & embed interactives
+        renderLog(`✅ Detected div-based table: ${tableRows.length} rows × ${tableRows[0].length} cols`);
+
+        const tableDataRows = tableRows.map((row, rowIndex) => {
+          return row.map(cell => {
+            let cellText = cell.text || '';
+            const interactives = [...cell.interactives];
+
+            for (const item of interactives) {
+              const { text: updatedText } = embedInteractiveRef(
+                cellText, item, elementMap,
+                { fallbackAppend: false }
+              );
+              cellText = updatedText;
             }
+
+            return {
+              text: normalizeTableCellText(cellText),
+              interactives: []
+            };
+          });
+        });
+
+        // Mark containers as part of table
+        tableRows.forEach(row => {
+          row.forEach(cell => cell.isPartOfDivTable = true);
+        });
+
+        // Mark interactives as used
+        const tableInteractives = tableRows.flat().map(c => c.interactives).flat();
+        tableInteractives.forEach(item => usedInteractives.add(item.el));
+
+        // Add to detected tables
+        detectedTables.push({
+          type: 'table',
+          y: firstY,
+          data: {
+            headers: [],
+            rows: tableDataRows
+          },
+          interactives: [],
+          selector: 'div[data-detect="div-table"]'
+        });
+
+        // Step 5: Remove containers of this table from remainingContainers
+        const removedContainers = new Set();
+
+        // Flatten tableRows for easy lookup
+        const tableCells = tableRows.flat();
+
+        for (const cell of tableCells) {
+          // Find and remove matching container
+          const idx = remainingContainers.findIndex(c => {
+            if (c.type !== 'container') return false;
+            if (c.y !== cell.y || c.x !== cell.x) return false;
+            // Optional: text sanity check
+            if (c.text?.trim() && cell.text?.trim() && c.text.trim() !== cell.text.trim()) return false;
+            return true;
+          });
+
+          if (idx !== -1) {
+            const matchedContainer = remainingContainers[idx];
+            remainingContainers.splice(idx, 1);
+            removedContainers.add(matchedContainer); // ✅ Now safe: use the actual object
           }
         }
+
+        renderLog(`Removed ${removedContainers.size} containers from remaining pool`);
       }
 
-      // Replace: keep only non-table containers + tables
-      const uniqueFiltered = unique.filter(item => !rowsToRemoveSet.has(item));
+      // Final: Combine detected tables + remaining containers
       unique.length = 0;
       unique.push(...detectedTables);
-      unique.push(...uniqueFiltered);
+      unique.push(...remainingContainers);
+
 
       // ─── END TABLE DETECTION ────────────────────────────────────────────────────────────
 
