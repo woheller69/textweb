@@ -88,6 +88,11 @@ async function renderMarkdown(page, options = {}) {
         '.tableContainer'  // Yahoo Finance (start here; add more as needed)
       ];
 
+      const TABLE_HEADER_SELECTORS = ['.tableHeader'];
+      const TABLE_BODY_SELECTORS = ['.tableBody'];
+      const TABLE_ROW_SELECTORS = ['.row'];
+      const TABLE_COLUM_SELECTORS = ['.column'];
+
       const LIST_SELECTORS = ['ol', 'ul'];
 
       // Exclude list/table subtrees from container text
@@ -418,20 +423,20 @@ async function renderMarkdown(page, options = {}) {
         const rows = [];
 
         // Extract header row from .tableHeader .row
-        const headerRow = tableContainer.querySelector('.tableHeader .row');
+        const headerRow = tableContainer.querySelector(TABLE_HEADER_SELECTORS.join(', '));
         if (headerRow) {
-          Array.from(headerRow.querySelectorAll('.column')).forEach(cell => {
+          Array.from(headerRow.querySelectorAll(TABLE_COLUM_SELECTORS.join(', '))).forEach(cell => {
             headers.push(normalizeTableCellText(decodeHTML(extractTextWithSpaces(cell))));
           });
         }
 
         // Extract body rows from .tableBody
-        const tableBody = tableContainer.querySelector('.tableBody');
+        const tableBody = tableContainer.querySelector(TABLE_BODY_SELECTORS.join(', '));
         if (tableBody) {
-          const bodyRows = Array.from(tableBody.querySelectorAll('.row'));
+          const bodyRows = Array.from(tableBody.querySelectorAll(TABLE_ROW_SELECTORS.join(', ')));
 
           bodyRows.forEach(rowEl => {
-            const cells = Array.from(rowEl.querySelectorAll('.column'));
+            const cells = Array.from(rowEl.querySelectorAll(TABLE_COLUM_SELECTORS.join(', ')));
             const rowData = cells.map(cell => {
               const text = normalizeTableCellText(decodeHTML(extractTextWithSpaces(cell)))
               const interactives = Array.from(
@@ -1299,8 +1304,9 @@ async function renderMarkdown(page, options = {}) {
         // We combine text, vertical position (rounded to 10px to allow slight shifts), and the primary link
         const textKey = (item.text || '').trim().toLowerCase();
         const yKey = Math.round(item.y / 20) * 20;
+        const xKey = Math.round(item.x / 20) * 20;
         const linkKey = item.interactives[0]?.href || '';
-        const fingerprint = `${textKey}|${yKey}|${linkKey}`;
+        const fingerprint = `${textKey}|${yKey}|${xKey}|${linkKey}`;
 
         if (!seenFingerprints.has(fingerprint)) {
           seenFingerprints.add(fingerprint);
@@ -1310,10 +1316,10 @@ async function renderMarkdown(page, options = {}) {
         }
       }
 
-      renderLog(`Rendering Markdown (Total items: ${unique.length})`);
-
+      // Heuristic analysis
       // ─── DETECT & RENDER TABLES FROM CONTAINER CLUSTERS ──────────────────────────────────
       // Step 1: Group containers by exact y (not rounded!) to find column groups
+      // TODO: add +/-10 pixels tolerance in y-direction, and/or compare nested depth, common ancestors, etc
       const yGroups = {};
       for (const item of unique) {
         if (item.type === 'container' && item.y != null) {
@@ -1454,6 +1460,8 @@ async function renderMarkdown(page, options = {}) {
       unique.push(...uniqueFiltered);
 
       // ─── END TABLE DETECTION ────────────────────────────────────────────────────────────
+
+      renderLog(`Rendering Markdown (Total items: ${unique.length})`);
 
       // Final render inside browser
       let markdown = '';
