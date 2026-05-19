@@ -224,6 +224,22 @@ async function renderMarkdown(page, options = {}) {
       }
 
       /**
+       * Computes the DOM depth of an element (number of ancestors from root to this element).
+       * The <html> element is at depth 0.
+       * @param {Element} el - DOM element
+       * @returns {number} DOM depth ≥ 0
+       */
+      function getDomDepth(el) {
+        let depth = 0;
+        let ancestor = el;
+        while (ancestor && ancestor.parentElement && ancestor.parentElement.tagName !== 'HTML') {
+          depth++;
+          ancestor = ancestor.parentElement;
+        }
+        return depth;
+      }
+
+      /**
        * Determines whether a DOM element is *functionally interactive* — i.e., likely triggers navigation or UI actions.
        * Checks standard interactive tags (A, BUTTON, etc.), ARIA roles/attributes, explicit tabindex, and behavioral clues
        * (onclick, aria-expanded/pressed/checked). Note: does NOT treat SPAN as interactive by default unless it has onclick/ARIA.
@@ -1188,20 +1204,18 @@ async function renderMarkdown(page, options = {}) {
 
       for (const container of filteredContainers) {
         if (!isVisibleInLayout(container)) continue;
-          // 👇 NEW: Detect and mark <pre> elements
+          // Detect and mark <pre> elements
         const isPre = container.tagName.toLowerCase() === 'pre';
         const text = extractTextWithSpaces(container, excludedForContainerText);
         if (!text && !isPre) continue; // allow empty pre if it has interactives? Rare, but okay.
 
         const rect = container.getBoundingClientRect();
         const top = rect.top + window.scrollY;
+        const yCenter = top + rect.height / 2; // ✅ NEW: center of element
+        const domDepth = getDomDepth(container); // ✅ NEW
 
         // Skip if entirely outside rendered range
-        if ((isOutsideRenderedRange(rect))) continue;
-
-        // Skip containers that are significantly taller than rendered range (likely layout wrappers)
-        // Disabled, reactivate later if needed. New container selection seems to make it obsolete
-        // if (renderHeight !== null && height > renderHeight * 5) continue;
+        if (isOutsideRenderedRange(rect)) continue;
 
         const containerInteractives = allInteractives.filter(item =>
           container.contains(item.el) && !usedInteractives.has(item.el)
@@ -1209,18 +1223,22 @@ async function renderMarkdown(page, options = {}) {
         containerInteractives.forEach(item => usedInteractives.add(item.el));
 
         const left = rect.left + window.scrollX;
+        const right = rect.right + window.scrollX;
 
         results.push({
           type: 'container',
           text,
           interactives: containerInteractives,
-          y: top,
+          y: top,            // kept for backward compat (vertical sort)
+          yCenter,           // ✅ NEW: for alignment (less sensitive to row height variations)
+          domDepth,          // ✅ NEW: for grouping by nesting level
           x: left,
+          xEnd: right,
           tag: container.tagName.toLowerCase(),
           isHeading: /^H[1-6]$/.test(container.tagName),
           headingLevel: container.tagName.match(/^H(\d)$/)?.[1] || null,
           isPre: isPre,
-          isPartOfDivTable: false // ← add this
+          isPartOfDivTable: false
         });
       }
 
@@ -1328,13 +1346,13 @@ async function renderMarkdown(page, options = {}) {
 
       // Keep extracting tables until none left
       while (true) {
-        // Step 1: Rebuild yGroups from remaining containers
+        // Step 1: Rebuild yGroups from remaining containers — use yCenter!
         const yGroups = {};
         for (const item of remainingContainers) {
-          if (item.type === 'container' && item.y != null) {
-            const y = Math.floor(item.y);
-            if (!yGroups[y]) yGroups[y] = [];
-            yGroups[y].push(item);
+          if (item.type === 'container' && item.yCenter != null) {
+            const yCenter = Math.floor(item.yCenter);
+            if (!yGroups[yCenter]) yGroups[yCenter] = [];
+            yGroups[yCenter].push(item);
           }
         }
 
@@ -1349,7 +1367,7 @@ async function renderMarkdown(page, options = {}) {
 
         if (potentialRows.length === 0) break; // No candidate rows left
 
-        // Step 3: Find the *best* table candidate (first aligned group ≥2 rows)
+        // Step 3: Find the *best* table candidate (first aligned group ≥3 rows)
         const processedLayouts = new Set();
         let bestTableCandidate = null;
 
@@ -1358,8 +1376,10 @@ async function renderMarkdown(page, options = {}) {
           if (processedLayouts.has(layoutKey)) continue;
           processedLayouts.add(layoutKey);
 
-          const firstY = row[0].y;
+          const firstY = Math.floor(row[0].yCenter);
           const firstXs = row.map(c => Math.round(c.x));
+          const firstWidths = row.map(c => c.w || c.xEnd - c.x); // ✅ use your `xEnd`!
+
 
           // Scan forward for rows with same layout
           const tableRows = [row];
@@ -1393,7 +1413,11 @@ async function renderMarkdown(page, options = {}) {
             const candidateRow = [...group].sort((a, b) => a.x - b.x);
             const candidateXs = candidateRow.map(c => Math.round(c.x));
 
-            const aligned = candidateXs.every((x, i) => Math.abs(x - firstXs[i]) <= 5);
+            const aligned = candidateXs.every((x, i) => {
+              const firstX = firstXs[i];
+              const firstXEnd = firstWidths[i] ? firstX + firstWidths[i] : firstX + 50; // fallback if no width
+              return x >= firstX - 10 && x <= firstXEnd + 10; // ±10px tolerance on both sides
+            });
             if (aligned) {
               // ✅ Accept row and log gap
               gaps.push(deltaY);
@@ -1404,7 +1428,7 @@ async function renderMarkdown(page, options = {}) {
           }
 
           // Commit if ≥2 rows
-          if (tableRows.length >= 2) {
+          if (tableRows.length >= 3) {
             bestTableCandidate = {
               tableRows,
               firstY,
@@ -1472,7 +1496,7 @@ async function renderMarkdown(page, options = {}) {
           // Find and remove matching container
           const idx = remainingContainers.findIndex(c => {
             if (c.type !== 'container') return false;
-            if (c.y !== cell.y || c.x !== cell.x) return false;
+            if (c.yCenter !== cell.yCenter || c.y !== cell.y || c.x !== cell.x) return false;
             // Optional: text sanity check
             if (c.text?.trim() && cell.text?.trim() && c.text.trim() !== cell.text.trim()) return false;
             return true;
