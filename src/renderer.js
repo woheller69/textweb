@@ -1114,7 +1114,15 @@ async function renderMarkdown(page, options = {}) {
         // --- STEP 4: SUCCESS ---
         // If we reached here, the element is a visible, non-table, non-excluded,
         // non-parent leaf node.
-        filteredContainers.push({ el, isInNav });
+        // Mark nav containers via __flags__ on element
+        for (const selector of EXCLUDED_NAV_SELECTORS) {
+          if (el.closest(selector)) {
+            isInNav = true;
+            break;
+          }
+        }
+        Object.defineProperty(el, '__flags__', { value: { isInNav }, writable: false, enumerable: false, configurable: false });
+        filteredContainers.push(el);
       }
 
 
@@ -1243,10 +1251,9 @@ async function renderMarkdown(page, options = {}) {
 
 
       for (const container of filteredContainers) {
+        const isInNav = container.__flags__?.isInNav || false;
         if (!isVisibleInLayout(container)) continue;
-          // Detect and mark <pre> elements
         const isPre = container.tagName.toLowerCase() === 'pre';
-        const isInNav = container.isInNav || false;
         const text = extractTextWithSpaces(container, excludedForContainerText);
         if (!text && !isPre) continue; // allow empty pre if it has interactives? Rare, but okay.
 
@@ -1280,7 +1287,7 @@ async function renderMarkdown(page, options = {}) {
           headingLevel: container.tagName.match(/^H(\d)$/)?.[1] || null,
           isPre: isPre,
           isPartOfDivTable: false,
-          isInNav // ✅ store nav flag
+          isInNav // ✅ still add it for consistency (but __flags__ is primary)
         });
       }
 
