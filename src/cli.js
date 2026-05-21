@@ -83,6 +83,7 @@ INTERACTIVE COMMANDS:
   snapshot                           Re-render current page
   query <selector>                   Find elements by CSS selector
   navigate <url>                     Navigate to new URL
+  navitems                           Show navigation items
   screenshot [filename]              Take screenshot
   elements                           List all interactive elements
   url                                Show current URL
@@ -180,6 +181,7 @@ Interactive Commands:
   snapshot                           Re-render current page
   query <selector>                   Find elements by CSS selector
   navigate <url>                     Navigate to new URL
+  navitems                           Show navigation items
   screenshot [filename]              Take screenshot
   elements                           List all interactive elements
   url                                Show current URL
@@ -246,6 +248,11 @@ Interactive Commands:
           case 'snapshot':
             result = await browser.snapshot();
             console.log(result.view);
+            break;
+
+          case 'navitems':
+            result = await browser.getNavItems();
+            console.log(result.nav);
             break;
 
           case 'back':

@@ -197,7 +197,7 @@ class AgentBrowser {
     if (!this.browser) {
       this.browser = await chromium.launch({
         headless: this.headless,
-        args: ['--no-sandbox', '--disable-setuid-sandbox',        '--force-renderer-accessibility'],
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--force-renderer-accessibility'],
       });
     }
 
@@ -251,6 +251,9 @@ class AgentBrowser {
       return await this.snapshot(); // returns page 0
     }
 
+  async getNavItems(){
+      return this.lastResult || null;
+  }
 
   /**
    * Capture and render the current page between scrollY and scrollY+renderHeight.
@@ -264,7 +267,7 @@ class AgentBrowser {
     // ✅ Remove ALL images and videos after page settles
       await this.page.evaluate(() => {document.querySelectorAll('img, video, picture, source, canvas, .aj-video-player, .video-page, .video-js, .live-stream-widget, .responsive-image').forEach(el => el.style.maxHeight="10px");});
 
-      this.scrollY = await this.page.evaluate(() => window.scrollY);  // sync with browser window
+      this.scrollY = await this.page.evaluate(() => window.scrollY);  // sync with browser window(
 
       // 🔁 Full-page render (no clipping)
       this.lastResult = await renderMarkdown(this.page, {
@@ -278,6 +281,7 @@ class AgentBrowser {
       console.log(`  Scroll Y: ${this.lastResult.meta.scrollY}px`);
       console.log(`  Full Height: ${this.lastResult.meta.fullHeight}px`);
       console.log(`  Total References: ${this.lastResult.meta.totalRefs}`);
+      console.log(`  NAV: ${this.lastResult.nav}`);
 
       // 🧩 Paginate once (caches if you want to memoize)
       const pagination = this.paginateRender(this.lastResult, { linesPerPage: 150 });
@@ -288,6 +292,7 @@ class AgentBrowser {
 
       console.log(`  Current Page: ${currentPageData.pageIdx + 1}`);
       console.log(`  TotalPages: ${currentPageData.totalPages}`);
+      console.log(`  RenderLog: ${this.lastResult.logs}`);
 
       return currentPageData;
     }

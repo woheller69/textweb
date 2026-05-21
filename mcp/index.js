@@ -150,6 +150,16 @@ const TOOLS = [
     },
   },
   {
+    name: 'textweb_show_nav',
+    description: 'Show navigation content (headers, footers, sidebars) from the current page. Returns markdown-formatted navigation section with interactive elements annotated (e.g., <1>, <2>). Use this to understand site structure, menus, footer links, etc.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: SESSION_NOTE },
+      },
+    },
+  },
+  {
     name: 'textweb_press',
     description: 'Press a keyboard key (e.g., Enter, Tab, Escape, ArrowDown). Returns the updated markdown text.',
     inputSchema: {
@@ -446,6 +456,23 @@ async function getBrowser(args = {}) {
 }
 
 /**
+ * Format a nav render result into text with interactive element list.
+ * Similar to formatResult, but tailored for nav content.
+ * @param {Object} result - Full render result with `.nav` and `.elements`
+ * @returns {string} Formatted nav text
+ */
+function formatNavResult(result) {
+  const navText = (result.nav || '').trim() || '(no navigation content found)';
+
+  const refs = Object.entries(result.elements || {})
+    .map(([ref, el]) => `<${ref}> ${el.semantic}: ${el.text || '(no text)'}: ${el.href || "no link"}`)
+    .join('\n');
+
+  return `Navigation Content:\n\n${navText}\n\nAll interactive elements:\n${refs}`;
+}
+
+
+/**
  * Format a render result into a single-line or multi-line text suitable for MCP responses.
  * Includes URL, visible range, title, reference count, view, and interactive element list.
  * @param {Object} result - Render result with `view`, `elements`, and `meta`
@@ -580,6 +607,11 @@ async function executeTool(name, args = {}) {
     case 'textweb_snapshot': {
       const result = await b.snapshot();
       return formatResult(result);
+    }
+    case 'textweb_show_nav': {
+      const result = await b.getNavItems();
+      if (!result) return 'No page loaded. Navigate to a page first.';
+      return formatNavResult(result);
     }
     case 'textweb_press': {
       const result = await b.press(args.key, retryOptions(args));
