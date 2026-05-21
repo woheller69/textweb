@@ -81,9 +81,21 @@ async function renderMarkdown(page, options = {}) {
 
       const INCLUDED_SELECTORS = ['p', 'figcaption', 'dt', 'dd', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'pre'];
 
+      // EXCLUDED_NAV_SELECTORS: Semantic navigation/footer sections (ARIA roles + HTML5 semantics)
+      const EXCLUDED_NAV_SELECTORS = [  //Exclude these, if they are inside INCLUDED_SELECTORS
+        //TODO: Render NAV items separately
+        'aside',
+        'header',
+        'footer',
+        '[role="complementary"]',
+        '[role="contentinfo"]',
+      ];
+      
+      // EXCLUDED_SELECTORS: Specific patterns to skip (e.g., tracking, ads, site-specific nav)
       const EXCLUDED_SELECTORS = [  //Exclude these, if they are inside INCLUDED_SELECTORS
           '.devsite-nav-item'              // Ignore devsite navigation items (Android Developer pages)
       ];
+
       const TABLE_SELECTORS = [
         '.tableContainer'  // Yahoo Finance (start here; add more as needed)
       ];
@@ -955,6 +967,9 @@ async function renderMarkdown(page, options = {}) {
         for (const selector of EXCLUDED_SELECTORS) {
             if (el.closest(selector)) return;
         }
+        for (const selector of EXCLUDED_NAV_SELECTORS) {
+            if (el.closest(selector)) return;
+        }
         if (!isVisibleInLayout(el) || !isInteractiveElement(el)) return;
 
         const rect = el.getBoundingClientRect();
@@ -1060,6 +1075,12 @@ async function renderMarkdown(page, options = {}) {
             break;
           }
         }
+        for (const selector of EXCLUDED_NAV_SELECTORS) {
+          if (el.closest(selector)) {
+            isExcluded = true;
+            break;
+          }
+        }
         if (isExcluded) continue;
 
         // 3d. Skip containers inside semantic tables
@@ -1103,6 +1124,12 @@ async function renderMarkdown(page, options = {}) {
           for (const selector of EXCLUDED_SELECTORS) {
             if (list.closest(selector)) {
               renderLog(`Skipping list inside ${selector}: ${list.className || list.tagName}`);
+              return false;
+            }
+          }
+          for (const selector of EXCLUDED_NAV_SELECTORS) {
+            if (list.closest(selector)) {
+              renderLog(`Skipping list inside NAV ${selector}: ${list.className || list.tagName}`);
               return false;
             }
           }
