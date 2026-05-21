@@ -103,24 +103,25 @@ textweb-mcp --host= --port=...
 
 The server exposes the following tools:
 
-| Tool | Description                                                                                                                          |
-|------|--------------------------------------------------------------------------------------------------------------------------------------|
-| `textweb_ddg_search` | Search DuckDuckGo via HTTP POST (no browser). Returns up to 20 structured results (title, link, snippet). Optimized for reliability. |
-| `textweb_navigate` | Navigate to a URL and render the page as markdown with annotated interactive elements. Primary way to view web pages.                |
+| Tool                    | Description                                                                                                                          |
+|-------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
+| `textweb_ddg_search`    | Search DuckDuckGo via HTTP POST (no browser). Returns up to 20 structured results (title, link, snippet). Optimized for reliability. |
+| `textweb_navigate`      | Navigate to a URL and render the page as markdown with annotated interactive elements. Primary way to view web pages.                |
 | `textweb_navigate_back` | Navigate back in browser history.                                                                                                    |
-| `textweb_click` | Click an interactive element by its reference number. Returns updated markdown after the click.                                      |
-| `textweb_type` | Type text into an input field by its reference number. Clears existing content and types the new text.                               |
-| `textweb_select` | Select an option from a dropdown/select element by its reference number.                                                             |
-| `textweb_scroll` | Scroll the page up or down (or top). Returns the updated markdown text for the new page.                                             |
-| `textweb_snapshot` | Re-render the current page as markdown without navigating. Useful after waiting for dynamic content.                                 |
-| `textweb_press` | Press a keyboard key (e.g., Enter, Tab, Escape, ArrowDown). Returns updated markdown.                                                |
-| `textweb_session_list` | List active sessions and basic metadata (url, age).                                                                                  |
+| `textweb_click`         | Click an interactive element by its reference number. Returns updated markdown after the click.                                      |
+| `textweb_type`          | Type text into an input field by its reference number. Clears existing content and types the new text.                               |
+| `textweb_select`        | Select an option from a dropdown/select element by its reference number.                                                             |
+| `textweb_show_nav`      | Show navigation content (headers, footers, sidebars) from the current page.                                  |
+| `textweb_scroll`        | Scroll the page up or down (or top). Returns the updated markdown text for the new page.                                             |
+| `textweb_snapshot`      | Re-render the current page as markdown without navigating. Useful after waiting for dynamic content.                                 |
+| `textweb_press`         | Press a keyboard key (e.g., Enter, Tab, Escape, ArrowDown). Returns updated markdown.                                                |
+| `textweb_session_list`  | List active sessions and basic metadata (url, age).                                                                                  |
 | `textweb_session_close` | Close one session by session_id, or all sessions when `all=true`.                                                                    |
-| `textweb_upload` | Upload a file to a file input element by its reference number.                                                                       |
-| `textweb_storage_save` | Save current browser storage state (cookies/localStorage/sessionStorage) to disk for later restore.                                  |
-| `textweb_storage_load` | Load storage state from disk into a fresh browser context.                                                                           |
-| `textweb_wait_for` | Wait for UI state in multi-step flows. Supports selector text, and url_includes checks.                                              |
-| `textweb_assert_field` | Assert a field value/text by element ref. Useful in multi-step forms before submitting.                                              |
+| `textweb_upload`        | Upload a file to a file input element by its reference number.                                                                       |
+| `textweb_storage_save`  | Save current browser storage state (cookies/localStorage/sessionStorage) to disk for later restore.                                  |
+| `textweb_storage_load`  | Load storage state from disk into a fresh browser context.                                                                           |
+| `textweb_wait_for`      | Wait for UI state in multi-step flows. Supports selector text, and url_includes checks.                                              |
+| `textweb_assert_field`  | Assert a field value/text by element ref. Useful in multi-step forms before submitting.                                              |
 
 #### Usage Example
 With this your LLM can do things like:
