@@ -13,6 +13,7 @@
  * @param {number|null} [options.renderHeight=null] - Max vertical range to render (null = full page)
  * @returns {Promise<Object>} Render result:
  *   - view {string} – Markdown-formatted content
+ *   - nav {string} – Markdown-formatted navigation content (headers, footers, sidebars, etc.)
  *   - elements {Record<number, InteractiveElement>} – Map of interactive elements keyed by sequential ref ID
  *   - meta {Object} – Metadata: scrollY, renderHeight, fullHeight, totalRefs, url, title
  *   - logs {string} – Collected browser-side logs
@@ -967,8 +968,13 @@ async function renderMarkdown(page, options = {}) {
         for (const selector of EXCLUDED_SELECTORS) {
             if (el.closest(selector)) return;
         }
+        // ✅ MARK NAV ITEMS INSTEAD OF EXCLUDING
+        let isInNav = false;
         for (const selector of EXCLUDED_NAV_SELECTORS) {
-            if (el.closest(selector)) return;
+          if (el.closest(selector)) {
+            isInNav = true;
+            break;
+          }
         }
         if (!isVisibleInLayout(el) || !isInteractiveElement(el)) return;
 
@@ -1007,7 +1013,8 @@ async function renderMarkdown(page, options = {}) {
           checked: el.type === 'checkbox' || el.type === 'radio' ? el.checked || null : null,
           selected: el.type === 'select-one' ? el.selected || null : null,
           disabled: el.disabled || false,
-          required: el.required || false
+          required: el.required || false,
+          isInNav // ✅ store nav flag
         });
       });
 
@@ -1067,7 +1074,7 @@ async function renderMarkdown(page, options = {}) {
           }
         }
 
-        // 3c. Exclude known unwanted areas (ads, nav, etc.)
+        // 3c. Exclude known unwanted areas (ads, etc.)
         let isExcluded = false;
         for (const selector of EXCLUDED_SELECTORS) {
           if (el.closest(selector)) {
@@ -1075,12 +1082,16 @@ async function renderMarkdown(page, options = {}) {
             break;
           }
         }
+
+        // ✅ MARK NAV ITEMS INSTEAD OF EXCLUDING
+        let isInNav = false;
         for (const selector of EXCLUDED_NAV_SELECTORS) {
           if (el.closest(selector)) {
-            isExcluded = true;
+            isInNav = true;
             break;
           }
         }
+
         if (isExcluded) continue;
 
         // 3d. Skip containers inside semantic tables
@@ -1103,7 +1114,7 @@ async function renderMarkdown(page, options = {}) {
         // --- STEP 4: SUCCESS ---
         // If we reached here, the element is a visible, non-table, non-excluded,
         // non-parent leaf node.
-        filteredContainers.push(el);
+        filteredContainers.push({ el, isInNav });
       }
 
 
@@ -1127,11 +1138,11 @@ async function renderMarkdown(page, options = {}) {
               return false;
             }
           }
-          for (const selector of EXCLUDED_NAV_SELECTORS) {
-            if (list.closest(selector)) {
-              renderLog(`Skipping list inside NAV ${selector}: ${list.className || list.tagName}`);
-              return false;
-            }
+
+          // ✅ MARK NAV ITEMS INSTEAD OF EXCLUDING
+          const isInNav = EXCLUDED_NAV_SELECTORS.some(sel => list.closest(sel));
+          if (isInNav) {
+            renderLog(`Marked nav list: ${list.className || list.tagName}`);
           }
 
           return isVisibleInLayout(list);
@@ -1167,7 +1178,8 @@ async function renderMarkdown(page, options = {}) {
           y: top,
           data: listData,
           interactives: listInteractives,
-          selector: buildSimpleSelector(listEl)
+          selector: buildSimpleSelector(listEl),
+          isInNav: EXCLUDED_NAV_SELECTORS.some(sel => listEl.closest(sel)) // ✅ store nav flag
         });
       }
       // ── End list processing ──────────────────────────────────────────────────
@@ -1222,7 +1234,8 @@ async function renderMarkdown(page, options = {}) {
           interactives: tableInteractives,
           selector: buildSimpleSelector(tableContainer),
           caption: tableContainer.querySelector('.subText')?.innerText.trim() ||
-                   tableContainer.querySelector('.currency')?.innerText.trim() || null
+                   tableContainer.querySelector('.currency')?.innerText.trim() || null,
+          isInNav: EXCLUDED_NAV_SELECTORS.some(sel => tableContainer.closest(sel)) // ✅ store nav flag
         });
       }
       renderLog(`Found ${results.length} tables so far`);
@@ -1233,6 +1246,7 @@ async function renderMarkdown(page, options = {}) {
         if (!isVisibleInLayout(container)) continue;
           // Detect and mark <pre> elements
         const isPre = container.tagName.toLowerCase() === 'pre';
+        const isInNav = container.isInNav || false;
         const text = extractTextWithSpaces(container, excludedForContainerText);
         if (!text && !isPre) continue; // allow empty pre if it has interactives? Rare, but okay.
 
@@ -1265,7 +1279,8 @@ async function renderMarkdown(page, options = {}) {
           isHeading: /^H[1-6]$/.test(container.tagName),
           headingLevel: container.tagName.match(/^H(\d)$/)?.[1] || null,
           isPre: isPre,
-          isPartOfDivTable: false
+          isPartOfDivTable: false,
+          isInNav // ✅ store nav flag
         });
       }
 
@@ -1314,7 +1329,8 @@ async function renderMarkdown(page, options = {}) {
           data: tableData,
           interactives: tableInteractives,
           selector: buildSimpleSelector(table),
-          caption: table.querySelector('caption')?.innerText.trim() || null
+          caption: table.querySelector('caption')?.innerText.trim() || null,
+          isInNav: EXCLUDED_NAV_SELECTORS.some(sel => table.closest(sel)) // ✅ store nav flag
         });
       }
 
@@ -1332,7 +1348,8 @@ async function renderMarkdown(page, options = {}) {
             tag: parentContainer?.tagName.toLowerCase() || 'div',
             isHeading: false,
             headingLevel: null,
-            isOrphanInteractive: true
+            isOrphanInteractive: true,
+            isInNav: item.isInNav || false // ✅ inherit nav flag from interactive item
           });
         }
       }
@@ -1551,8 +1568,12 @@ async function renderMarkdown(page, options = {}) {
 
       // Final render inside browser
       let markdown = '';
+      let navMarkdown = ''; // ✅ NEW: accumulate navigation markdown
 
       for (const p of unique.sort((a, b) => a.y - b.y)) {
+        // ✅ Use stored isInNav flag — works for all item types
+        const isInNav = !!(p.isInNav || (p.data && p.data.isInNav) || false);
+
         if (p.isHeading && p.text) {
           const level = Math.min(6, p.headingLevel || 2);
           markdown += `\n${'#'.repeat(level)} `;
@@ -1564,7 +1585,12 @@ async function renderMarkdown(page, options = {}) {
             .replace(/[`\\]/g, '\\$1') // escape backticks & backslashes only
             .replace(/\u00A0/g, ' ');   // normalize whitespace, but keep \n
 
-          markdown += `\n\`\`\`\n${codeText}\n\`\`\`\n\n`;
+          // ✅ NEW: Route nav <pre> blocks
+          if (isInNav) {
+            navMarkdown += `\n\`\`\`\n${codeText}\n\`\`\`\n\n`;
+          } else {
+            markdown += `\n\`\`\`\n${codeText}\n\`\`\`\n\n`;
+          }
           continue; // ✅ skip paragraph rendering for code blocks
         }
 
@@ -1584,17 +1610,30 @@ async function renderMarkdown(page, options = {}) {
           }
 
           if (renderedItems.length > 0) {
-            markdown += renderedItems.join('\n') + '\n\n';
+            // ✅ NEW: Route to nav or body
+            const navContent = renderedItems.join('\n') + '\n\n';
+            if (isInNav) {
+              navMarkdown += navContent;
+            } else {
+              markdown += navContent;
+            }
           }
           continue;
         }
 
         // ── Render Tables ────────────────────────────────────────────────────────
         if (p.type === 'table') {
-          markdown += renderTableLLMOptimized(p.data);
+          let tableMarkdown = renderTableLLMOptimized(p.data);
 
-          if (p.caption) markdown += `\n\n*Caption: ${escapeForLLM(p.caption)}*`;
-          markdown += '\n\n';
+          if (p.caption) tableMarkdown += `\n\n*Caption: ${escapeForLLM(p.caption)}*`;
+          tableMarkdown += '\n\n';
+
+          // ✅ NEW: Route to nav or body
+          if (isInNav) {
+            navMarkdown += tableMarkdown;
+          } else {
+            markdown += tableMarkdown;
+          }
           continue;
         }
 
@@ -1608,7 +1647,12 @@ async function renderMarkdown(page, options = {}) {
             if (item.tag === 'input' && (item.type === 'submit' || item.type === 'button')) {
               display = `[${item.text}]@@REF${refId}@@`;
             }
-            markdown += `${display}\n\n`;
+            // ✅ NEW: Route orphan nav interactives
+            if (item.isInNav) {
+              navMarkdown += `${display}\n\n`;
+            } else {
+              markdown += `${display}\n\n`;
+            }
           }
           continue;
         }
@@ -1647,14 +1691,23 @@ async function renderMarkdown(page, options = {}) {
         }
 
         const cleaned = text.replace(/\s+/g, ' ').trim();
-        if (cleaned) markdown += cleaned + '\n\n';
+        if (cleaned) {
+          // ✅ NEW: Route to nav or body based on stored isInNav flag
+          if (isInNav) {
+            navMarkdown += cleaned + '\n\n';
+          } else {
+            markdown += cleaned + '\n\n';
+          }
+        }
       }
 
-      // Post-process: reassign reference IDs in order of appearance in markdown
-      const refMatches = [...markdown.matchAll(/@@REF(\d+)@@/g)].map(m => parseInt(m[1]));
+      // ─── POST-PROCESSING: REASSIGN REFERENCE IDS ───────────────────────────────
+      // ✅ NEW: Reassign IDs based on *all* refs (body + nav)
+      const allMarkdown = markdown + navMarkdown;
+      const refMatches = [...allMarkdown.matchAll(/@@REF(\d+)@@/g)].map(m => parseInt(m[1]));
 
       if (refMatches.length > 0) {
-        // 1. Build mapping from old refId → new sequential ID (by first appearance in markdown)
+        // 1. Build mapping from old refId → new sequential ID (by first appearance)
         const refToNewId = {};
         let newId = 1;
         const seen = new Set();
@@ -1675,8 +1728,13 @@ async function renderMarkdown(page, options = {}) {
           }
         }
 
-        // 3. Replace placeholders using new sequential IDs
+        // 3. Replace placeholders in *both* markdowns
         markdown = markdown.replace(/@@REF(\d+)@@/g, (match, oldRefIdStr) => {
+          const oldRefId = parseInt(oldRefIdStr);
+          const newRefId = refToNewId[oldRefId];
+          return `<${newRefId}>`;
+        });
+        navMarkdown = navMarkdown.replace(/@@REF(\d+)@@/g, (match, oldRefIdStr) => {
           const oldRefId = parseInt(oldRefIdStr);
           const newRefId = refToNewId[oldRefId];
           return `<${newRefId}>`;
@@ -1684,8 +1742,7 @@ async function renderMarkdown(page, options = {}) {
 
         // 4. Replace elementMap
         elementMap = reorderedMap;
-      }
-
+}
 
       // After all refs are embedded and markdown built...
       // Post-process elementMap to truncate safely:
@@ -1699,6 +1756,7 @@ async function renderMarkdown(page, options = {}) {
 
       return {
         view: markdown.trim(),
+        nav: navMarkdown.trim(), // ✅ NEW: return nav markdown separately
         elements: elementMap,
         meta: {
           scrollY,
