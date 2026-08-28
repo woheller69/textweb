@@ -78,6 +78,9 @@ async function renderMarkdown(page, options = {}) {
       }
       // ──────────────────────────────────────────────────────────────────────────
 
+
+      const navFlags = new WeakMap();
+
       // ─── ALL HELPER FUNCTIONS (browser context) ─────────────────────────────
 
       const INCLUDED_SELECTORS = ['p', 'figcaption', 'dt', 'dd', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'pre'];
@@ -1121,7 +1124,7 @@ async function renderMarkdown(page, options = {}) {
             break;
           }
         }
-        Object.defineProperty(el, '__flags__', { value: { isInNav }, writable: false, enumerable: false, configurable: false });
+        navFlags.set(el, { isInNav });
         filteredContainers.push(el);
       }
 
@@ -1251,7 +1254,7 @@ async function renderMarkdown(page, options = {}) {
 
 
       for (const container of filteredContainers) {
-        const isInNav = container.__flags__?.isInNav || false;
+        const isInNav = navFlags.get(container)?.isInNav || false;
         if (!isVisibleInLayout(container)) continue;
         const isPre = container.tagName.toLowerCase() === 'pre';
         const text = extractTextWithSpaces(container, excludedForContainerText);
